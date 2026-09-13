@@ -1,4 +1,4 @@
-CREATE DATABASE IF NOT EXISTS hortifruti;
+CREATE DATABASE hortifruti;
 USE hortifruti;
 
 CREATE TABLE `CLIENTE` (
