@@ -1,10 +1,11 @@
 -- =========================================================
--- Sistema Administrativo para Empresa de Varejo do Ramo Hortifrúti
--- Script de criação do banco de dados (com tipos de dados corrigidos)
+-- Sistema Administrativo para Empresa de Varejo do Ramo Hortifruti
+-- Etapa 02 - Criacao de Tabelas (com constraints) e Insercao de Dados
 -- =========================================================
 
-CREATE DATABASE IF NOT EXISTS hortifruti;
+CREATE DATABASE hortifruti;
 USE hortifruti;
+
 
 -- =========================================================
 -- CLIENTE
@@ -18,11 +19,15 @@ CREATE TABLE CLIENTE (
     rua             VARCHAR(100) NOT NULL,
     bairro          VARCHAR(60)  NOT NULL,
     numero          VARCHAR(10)  NOT NULL,
-    apartamento     VARCHAR(10)
+    apartamento     VARCHAR(10),
+    CONSTRAINT uq_cliente_cpf_cnpj UNIQUE (cpf_cnpj),
+    CONSTRAINT ck_cliente_cpf_cnpj_tam CHECK (CHAR_LENGTH(cpf_cnpj) BETWEEN 11 AND 18)
 );
 
 -- =========================================================
 -- FUNCIONARIO (autorrelacionamento supervisiona/supervisionado)
+-- Demonstra ON DELETE SET NULL: se o supervisor for excluido,
+-- o funcionario subordinado apenas fica sem supervisor.
 -- =========================================================
 CREATE TABLE FUNCIONARIO (
     nr_funcionario              INT AUTO_INCREMENT PRIMARY KEY,
@@ -35,8 +40,12 @@ CREATE TABLE FUNCIONARIO (
     numero                      VARCHAR(10)  NOT NULL,
     apartamento                 VARCHAR(10),
     nr_funcionario_supervisor   INT,
+    CONSTRAINT uq_funcionario_cpf UNIQUE (cpf),
+    CONSTRAINT ck_funcionario_cpf_tam CHECK (CHAR_LENGTH(cpf) = 11),
     FOREIGN KEY (nr_funcionario_supervisor)
         REFERENCES FUNCIONARIO (nr_funcionario)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
 );
 
 -- =========================================================
@@ -51,7 +60,9 @@ CREATE TABLE FORNECEDOR (
     cep              VARCHAR(9)   NOT NULL,
     rua              VARCHAR(100) NOT NULL,
     bairro           VARCHAR(60)  NOT NULL,
-    numero           VARCHAR(10)  NOT NULL
+    numero           VARCHAR(10)  NOT NULL,
+    CONSTRAINT uq_fornecedor_cnpj UNIQUE (cnpj_fornecedor),
+    CONSTRAINT ck_fornecedor_cnpj_tam CHECK (CHAR_LENGTH(cnpj_fornecedor) = 14)
 );
 
 -- =========================================================
@@ -62,8 +73,9 @@ CREATE TABLE PRODUTO (
     nome                     VARCHAR(100) NOT NULL,
     descricao                VARCHAR(255),
     valor_kg_ou_unitario     DECIMAL(10,2) NOT NULL,
-    vendido_unitario         BOOLEAN NOT NULL,
-    marca                    VARCHAR(60)
+    vendido_unitario         BOOLEAN NOT NULL DEFAULT FALSE,
+    marca                    VARCHAR(60),
+    CONSTRAINT ck_produto_valor_positivo CHECK (valor_kg_ou_unitario > 0)
 );
 
 -- =========================================================
@@ -71,21 +83,28 @@ CREATE TABLE PRODUTO (
 -- =========================================================
 CREATE TABLE CATEGORIA (
     cd_categoria    INT AUTO_INCREMENT PRIMARY KEY,
-    nm_categoria    VARCHAR(60) NOT NULL
+    nm_categoria    VARCHAR(60) NOT NULL,
+    CONSTRAINT uq_categoria_nome UNIQUE (nm_categoria)
 );
 
 -- =========================================================
 -- ESTOQUE (controle por lote)
+-- Demonstra ON UPDATE CASCADE: se cd_produto de PRODUTO mudar,
+-- o lote em ESTOQUE acompanha automaticamente.
 -- =========================================================
 CREATE TABLE ESTOQUE (
     cd_produto    INT NOT NULL,
     nr_lote       INT NOT NULL,
     quantidade    DECIMAL(10,3) NOT NULL,
     dt_validade   DATE NOT NULL,
-    dt_entrada    DATE NOT NULL,
+    dt_entrada    DATE NOT NULL DEFAULT (CURRENT_DATE),
     PRIMARY KEY (cd_produto, nr_lote),
+    CONSTRAINT ck_estoque_quantidade CHECK (quantidade >= 0),
+    CONSTRAINT ck_estoque_datas CHECK (dt_validade > dt_entrada),
     FOREIGN KEY (cd_produto)
         REFERENCES PRODUTO (cd_produto)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
 );
 
 -- =========================================================
@@ -95,14 +114,17 @@ CREATE TABLE PEDIDO (
     nr_venda_mes      INT AUTO_INCREMENT PRIMARY KEY,
     nr_cliente        INT NOT NULL,
     dt_venda          DATE NOT NULL,
-    forma_pagamento   VARCHAR(30) NOT NULL,
+    forma_pagamento   VARCHAR(30) NOT NULL DEFAULT 'Dinheiro',
     vl_total          DECIMAL(10,2) NOT NULL,
+    CONSTRAINT ck_pedido_forma_pagamento CHECK (forma_pagamento IN
+        ('Dinheiro','Cartao de Credito','Cartao de Debito','Pix','Boleto')),
+    CONSTRAINT ck_pedido_valor_total CHECK (vl_total >= 0),
     FOREIGN KEY (nr_cliente)
         REFERENCES CLIENTE (nr_cliente)
 );
 
 -- =========================================================
--- DEVOLUCAO (relação 1:1 opcional com PEDIDO)
+-- DEVOLUCAO (relacao 1:1 opcional com PEDIDO)
 -- =========================================================
 CREATE TABLE DEVOLUCAO (
     n_devolucao           INT AUTO_INCREMENT PRIMARY KEY,
@@ -111,6 +133,8 @@ CREATE TABLE DEVOLUCAO (
     forma_resolucao       VARCHAR(50),
     motivo                VARCHAR(255),
     devolucao_efetivada   BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT ck_devolucao_resolucao CHECK (forma_resolucao IN
+        ('Troca','Reembolso','Credito','Reparo') OR forma_resolucao IS NULL),
     FOREIGN KEY (nr_venda_mes)
         REFERENCES PEDIDO (nr_venda_mes)
 );
@@ -126,8 +150,11 @@ CREATE TABLE PERDA (
     qt_perdida           DECIMAL(10,3) NOT NULL,
     motivo_perda         VARCHAR(255),
     descarte_efetivado   BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT ck_perda_quantidade CHECK (qt_perdida > 0),
     FOREIGN KEY (cd_produto, nr_lote)
         REFERENCES ESTOQUE (cd_produto, nr_lote)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
 );
 
 -- =========================================================
@@ -136,12 +163,16 @@ CREATE TABLE PERDA (
 CREATE TABLE FORNECE (
     cd_fornecedor     INT NOT NULL,
     cd_produto        INT NOT NULL,
-    modo_transporte   VARCHAR(50),
+    modo_transporte   VARCHAR(50) DEFAULT 'Rodoviario',
     PRIMARY KEY (cd_fornecedor, cd_produto),
+    CONSTRAINT ck_fornece_modo CHECK (modo_transporte IN
+        ('Rodoviario','Ferroviario','Aereo','Maritimo') OR modo_transporte IS NULL),
     FOREIGN KEY (cd_fornecedor)
         REFERENCES FORNECEDOR (cd_fornecedor),
     FOREIGN KEY (cd_produto)
         REFERENCES PRODUTO (cd_produto)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
 );
 
 -- =========================================================
@@ -155,6 +186,8 @@ CREATE TABLE TEM (
         REFERENCES CATEGORIA (cd_categoria),
     FOREIGN KEY (cd_produto)
         REFERENCES PRODUTO (cd_produto)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
 );
 
 -- =========================================================
@@ -165,8 +198,437 @@ CREATE TABLE POSSUI (
     nr_venda_mes    INT NOT NULL,
     quantidade      DECIMAL(10,3) NOT NULL,
     PRIMARY KEY (cd_produto, nr_venda_mes),
+    CONSTRAINT ck_possui_quantidade CHECK (quantidade > 0),
     FOREIGN KEY (cd_produto)
-        REFERENCES PRODUTO (cd_produto),
+        REFERENCES PRODUTO (cd_produto)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
     FOREIGN KEY (nr_venda_mes)
         REFERENCES PEDIDO (nr_venda_mes)
 );
+
+
+-- =========================================================
+-- INSERCAO DE DADOS
+-- =========================================================
+
+-- CLIENTE (30 tuplas)
+INSERT INTO CLIENTE (cpf_cnpj, telefone, telefone2, cep, rua, bairro, numero, apartamento) VALUES
+('043.321.819-60', '8190499914', '8193903402', '54139-616', 'Rua Santos', 'Casa Forte', '55', NULL),
+('863.794.026-54', '8192608513', '8195647119', '50837-094', 'Rua Oliveira', 'Gracas', '779', '177'),
+('078.161.849-59', '8193226067', NULL, '50375-677', 'Rua Souza', 'Espinheiro', '467', NULL),
+('31.647.525/5341-92', '8198961380', NULL, '51338-473', 'Rua Rodrigues', 'Boa Vista', '778', '328'),
+('350.305.641-39', '8195279418', '8198375710', '53241-905', 'Rua Ferreira', 'Madalena', '1873', NULL),
+('238.849.696-53', '8192320821', NULL, '50744-773', 'Rua Alves', 'Torre', '97', NULL),
+('269.166.978-48', '8190192619', NULL, '50938-698', 'Rua Pereira', 'Ilha do Leite', '1813', NULL),
+('514.627.048-28', '8191785277', NULL, '52444-861', 'Rua Lima', 'Aflitos', '1309', NULL),
+('528.809.570-15', '8195159230', '8194041154', '57192-580', 'Rua Gomes', 'Encruzilhada', '1940', '375'),
+('182.278.248-96', '8193553384', NULL, '56187-747', 'Rua Costa', 'Parnamirim', '1413', '160'),
+('578.713.315-09', '8199293261', '8193694634', '50058-072', 'Rua Ribeiro', 'Casa Amarela', '1450', NULL),
+('051.834.738-29', '8199667227', NULL, '56427-484', 'Rua Martins', 'Tamarineira', '1654', NULL),
+('656.670.106-51', '8194171761', '8198997381', '53675-143', 'Rua Carvalho', 'Derby', '865', '237'),
+('178.108.013-26', '8198147706', NULL, '57083-410', 'Rua Almeida', 'Jaqueira', '1849', '195'),
+('647.468.723-43', '8190981186', NULL, '54441-062', 'Rua Lopes', 'Poco', '1532', NULL),
+('788.208.121-91', '8193946066', NULL, '57713-911', 'Rua Soares', 'Cordeiro', '1167', '305'),
+('169.985.435-34', '8196640184', '8195033115', '53745-323', 'Rua Fernandes', 'Rosarinho', '1903', NULL),
+('799.118.384-25', '8191154126', NULL, '53027-291', 'Rua Vieira', 'Piedade', '324', NULL),
+('498.084.124-11', '8199281552', '8194727085', '54954-215', 'Rua Barbosa', 'Candeias', '1470', NULL),
+('487.401.640-05', '8192194789', NULL, '52145-165', 'Rua Rocha', 'Imbiribeira', '1519', NULL),
+('801.128.059-82', '8197210624', '8195171716', '52987-920', 'Rua Dias', 'Pina', '1911', NULL),
+('53.315.869/2322-60', '8193009172', NULL, '52721-801', 'Rua Monteiro', 'Setubal', '1907', NULL),
+('342.160.733-75', '8195120253', NULL, '57137-233', 'Rua Cardoso', 'Ipsep', '457', '99'),
+('414.586.850-14', '8192995870', NULL, '52174-039', 'Rua Reis', 'Varzea', '223', NULL),
+('569.816.934-06', '8190028374', NULL, '56606-551', 'Rua Araujo', 'Curado', '1407', NULL),
+('356.159.514-84', '8196851696', '8194960271', '54541-130', 'Rua Castro', 'Areias', '393', NULL),
+('29.946.804/4369-95', '8197801207', NULL, '55534-218', 'Rua Andrade', 'San Martin', '1047', NULL),
+('21.489.513/4332-00', '8194107776', NULL, '55007-870', 'Rua Nascimento', 'Iputinga', '1574', '213'),
+('93.676.320/1632-87', '8190842524', NULL, '57515-868', 'Rua Moreira', 'Cidade Universitaria', '249', NULL),
+('889.579.868-72', '8197963715', NULL, '56158-253', 'Rua Silva', 'Boa Viagem', '1721', NULL);
+
+-- FUNCIONARIO (30 tuplas)
+INSERT INTO FUNCIONARIO (nome, cpf, telefone, cep, rua, bairro, numero, apartamento, nr_funcionario_supervisor) VALUES
+('Bruno Souza', '87347143455', '8199062250', '50660-141', 'Rua Lima', 'Boa Vista', '309', '356', NULL),
+('Carlos Alves', '23166587603', '8197048838', '53190-926', 'Rua Gomes', 'Madalena', '1577', NULL, NULL),
+('Daniela Gomes', '09670546688', '8193700025', '53999-224', 'Rua Costa', 'Torre', '559', NULL, NULL),
+('Eduardo Martins', '06562729806', '8199930312', '54623-678', 'Rua Ribeiro', 'Ilha do Leite', '56', '220', NULL),
+('Fernanda Lopes', '27204653755', '8196360682', '52279-770', 'Rua Martins', 'Aflitos', '1949', NULL, NULL),
+('Gabriel Vieira', '41708053100', '8194148725', '51633-859', 'Rua Carvalho', 'Encruzilhada', '42', NULL, 2),
+('Helena Dias', '27193745299', '8191921542', '56371-838', 'Rua Almeida', 'Parnamirim', '336', NULL, 1),
+('Igor Reis', '90496631931', '8195059717', '56965-700', 'Rua Lopes', 'Casa Amarela', '1230', NULL, 7),
+('Juliana Andrade', '90586518506', '8198224219', '50864-443', 'Rua Soares', 'Tamarineira', '1968', NULL, 8),
+('Katia Silva', '26284987769', '8194502929', '52640-872', 'Rua Fernandes', 'Derby', '503', NULL, 2),
+('Lucas Souza', '47379965075', '8193050766', '53994-217', 'Rua Vieira', 'Jaqueira', '727', NULL, 6),
+('Mariana Alves', '49480831367', '8199314311', '56210-246', 'Rua Barbosa', 'Poco', '1415', NULL, 8),
+('Nelson Gomes', '70143634957', '8199285735', '54349-352', 'Rua Rocha', 'Cordeiro', '872', NULL, 9),
+('Otavio Martins', '55744431351', '8198990305', '57789-780', 'Rua Dias', 'Rosarinho', '1414', '111', 12),
+('Patricia Lopes', '74989413435', '8193010529', '52476-014', 'Rua Monteiro', 'Piedade', '1451', NULL, 5),
+('Rafael Vieira', '00842710947', '8198031491', '53608-348', 'Rua Cardoso', 'Candeias', '378', NULL, 5),
+('Sabrina Dias', '71167190229', '8195097514', '50697-254', 'Rua Reis', 'Imbiribeira', '243', NULL, 14),
+('Tiago Reis', '99938677496', '8195123430', '54658-635', 'Rua Araujo', 'Pina', '124', NULL, 4),
+('Vanessa Andrade', '33412328120', '8196853787', '53690-705', 'Rua Castro', 'Setubal', '1217', NULL, 2),
+('William Silva', '34471349361', '8199136240', '51841-663', 'Rua Andrade', 'Ipsep', '306', NULL, 5),
+('Yasmin Souza', '10249947174', '8196752972', '57722-278', 'Rua Nascimento', 'Varzea', '1025', NULL, 15),
+('Zelia Alves', '19065940139', '8199850288', '57788-021', 'Rua Moreira', 'Curado', '1567', NULL, 9),
+('Andre Gomes', '90278742967', '8191530793', '53850-356', 'Rua Silva', 'Areias', '837', NULL, 22),
+('Bianca Martins', '12567468071', '8195276722', '52067-331', 'Rua Santos', 'San Martin', '238', NULL, 13),
+('Caio Lopes', '80876038597', '8197416216', '56225-052', 'Rua Oliveira', 'Iputinga', '417', NULL, 5),
+('Debora Vieira', '47710932480', '8199265241', '53342-095', 'Rua Souza', 'Cidade Universitaria', '461', NULL, 4),
+('Elisa Dias', '71274846773', '8197663605', '54515-148', 'Rua Rodrigues', 'Boa Viagem', '786', '307', 17),
+('Felipe Reis', '21465840449', '8199729499', '55406-501', 'Rua Ferreira', 'Casa Forte', '1773', '276', 16),
+('Gustavo Andrade', '55886753396', '8193918527', '57012-794', 'Rua Alves', 'Gracas', '842', '382', 16),
+('Isabela Silva', '66270289517', '8191672884', '54308-932', 'Rua Pereira', 'Espinheiro', '936', '74', 14);
+
+-- FORNECEDOR (30 tuplas)
+INSERT INTO FORNECEDOR (nome, cnpj_fornecedor, telefone, telefone2, cep, rua, bairro, numero) VALUES
+('Santos Comercio de Hortifruti Ltda', '21745961586578', '8190602286', NULL, '51923-646', 'Rua Soares', 'Aflitos', '1402'),
+('Oliveira Agropecuaria Ltda', '43161172400504', '8196014016', '8192442255', '52000-543', 'Rua Fernandes', 'Encruzilhada', '844'),
+('Souza Atacado de Frutas Ltda', '92221969379237', '8194261032', NULL, '55462-009', 'Rua Vieira', 'Parnamirim', '1841'),
+('Rodrigues Central de Abastecimento Ltda', '74821759464743', '8196454081', NULL, '50873-242', 'Rua Barbosa', 'Casa Amarela', '782'),
+('Ferreira Importadora Ltda', '95944064090974', '8193860745', NULL, '52886-224', 'Rua Rocha', 'Tamarineira', '1304'),
+('Alves Cooperativa Agricola Ltda', '39421047095214', '8195481437', NULL, '51438-205', 'Rua Dias', 'Derby', '271'),
+('Pereira Logistica Rural Ltda', '85884247451712', '8193785186', NULL, '55932-690', 'Rua Monteiro', 'Jaqueira', '814'),
+('Lima Distribuidora Ltda', '85160481754965', '8191817745', NULL, '53862-025', 'Rua Cardoso', 'Poco', '1269'),
+('Gomes Comercio de Hortifruti Ltda', '85931746120047', '8191948178', '8199018535', '51111-397', 'Rua Reis', 'Cordeiro', '930'),
+('Costa Agropecuaria Ltda', '58692617964053', '8197438733', NULL, '51934-875', 'Rua Araujo', 'Rosarinho', '743'),
+('Ribeiro Atacado de Frutas Ltda', '15850643171390', '8190848566', NULL, '51995-128', 'Rua Castro', 'Piedade', '1612'),
+('Martins Central de Abastecimento Ltda', '93183933529042', '8192180906', NULL, '56541-178', 'Rua Andrade', 'Candeias', '226'),
+('Carvalho Importadora Ltda', '02053950240268', '8191906718', NULL, '53901-459', 'Rua Nascimento', 'Imbiribeira', '1594'),
+('Almeida Cooperativa Agricola Ltda', '58917839084700', '8198035982', NULL, '53492-702', 'Rua Moreira', 'Pina', '222'),
+('Lopes Logistica Rural Ltda', '77115921249985', '8196390515', NULL, '54346-301', 'Rua Silva', 'Setubal', '930'),
+('Soares Distribuidora Ltda', '89611836736576', '8196979148', NULL, '52560-437', 'Rua Santos', 'Ipsep', '641'),
+('Fernandes Comercio de Hortifruti Ltda', '45271111615280', '8199839251', NULL, '54601-337', 'Rua Oliveira', 'Varzea', '1373'),
+('Vieira Agropecuaria Ltda', '16560494519832', '8198089795', '8191815603', '52868-865', 'Rua Souza', 'Curado', '1140'),
+('Barbosa Atacado de Frutas Ltda', '51493689980940', '8193026879', '8195183902', '57549-347', 'Rua Rodrigues', 'Areias', '719'),
+('Rocha Central de Abastecimento Ltda', '02296120183667', '8195719285', '8195228407', '55911-332', 'Rua Ferreira', 'San Martin', '1591'),
+('Dias Importadora Ltda', '99102290147679', '8197416270', NULL, '51765-773', 'Rua Alves', 'Iputinga', '1050'),
+('Monteiro Cooperativa Agricola Ltda', '15614978403690', '8190128967', '8193543918', '56286-140', 'Rua Pereira', 'Cidade Universitaria', '1566'),
+('Cardoso Logistica Rural Ltda', '44510762268388', '8195941939', '8190709714', '53573-019', 'Rua Lima', 'Boa Viagem', '942'),
+('Reis Distribuidora Ltda', '15969664160529', '8197719145', NULL, '57534-370', 'Rua Gomes', 'Casa Forte', '181'),
+('Araujo Comercio de Hortifruti Ltda', '61369681645352', '8191281433', NULL, '50934-543', 'Rua Costa', 'Gracas', '1045'),
+('Castro Agropecuaria Ltda', '35523124329212', '8198289908', NULL, '54618-778', 'Rua Ribeiro', 'Espinheiro', '1187'),
+('Andrade Atacado de Frutas Ltda', '79955271774490', '8195904610', NULL, '52542-472', 'Rua Martins', 'Boa Vista', '926'),
+('Nascimento Central de Abastecimento Ltda', '00541199867980', '8197545279', NULL, '54683-667', 'Rua Carvalho', 'Madalena', '386'),
+('Moreira Importadora Ltda', '59782071518203', '8197344365', NULL, '54293-535', 'Rua Almeida', 'Torre', '1249'),
+('Silva Cooperativa Agricola Ltda', '25546659051518', '8196485471', '8192522845', '52730-083', 'Rua Lopes', 'Ilha do Leite', '1194');
+
+-- PRODUTO (30 tuplas)
+INSERT INTO PRODUTO (nome, descricao, valor_kg_ou_unitario, vendido_unitario, marca) VALUES
+('Banana Prata', 'Banana Prata selecionado(a), qualidade para revenda', 8.47, 0, 'Organico Bom Gosto'),
+('Maca Gala', 'Maca Gala selecionado(a), qualidade para revenda', 11.66, 0, 'Colheita Fresca'),
+('Laranja Pera', 'Laranja Pera selecionado(a), qualidade para revenda', 2.85, 0, 'Sitio Boa Terra'),
+('Mamao Formosa', 'Mamao Formosa selecionado(a), qualidade para revenda', 4.75, 0, 'Organico Bom Gosto'),
+('Manga Tommy', 'Manga Tommy selecionado(a), qualidade para revenda', 10.04, 0, NULL),
+('Abacaxi Perola', 'Abacaxi Perola selecionado(a), qualidade para revenda', 2.48, 0, NULL),
+('Uva Italia', 'Uva Italia selecionado(a), qualidade para revenda', 5.3, 0, 'Fazenda Verde'),
+('Melancia', 'Melancia selecionado(a), qualidade para revenda', 11.49, 0, 'Colheita Fresca'),
+('Melao', 'Melao selecionado(a), qualidade para revenda', 3.52, 0, 'Fazenda Verde'),
+('Morango', 'Morango selecionado(a), qualidade para revenda', 2.31, 0, 'Sitio Boa Terra'),
+('Limao Tahiti', 'Limao Tahiti selecionado(a), qualidade para revenda', 6.83, 0, NULL),
+('Tangerina', 'Tangerina selecionado(a), qualidade para revenda', 1.9, 0, NULL),
+('Pera', 'Pera selecionado(a), qualidade para revenda', 2.88, 0, 'Fazenda Verde'),
+('Kiwi', 'Kiwi selecionado(a), qualidade para revenda', 3.4, 0, NULL),
+('Abacate', 'Abacate selecionado(a), qualidade para revenda', 9.99, 1, 'Colheita Fresca'),
+('Tomate', 'Tomate selecionado(a), qualidade para revenda', 1.96, 0, 'Fazenda Verde'),
+('Batata Inglesa', 'Batata Inglesa selecionado(a), qualidade para revenda', 11.68, 0, 'Colheita Fresca'),
+('Cebola', 'Cebola selecionado(a), qualidade para revenda', 3.96, 1, 'Colheita Fresca'),
+('Cenoura', 'Cenoura selecionado(a), qualidade para revenda', 10.99, 1, NULL),
+('Alface Crespa', 'Alface Crespa selecionado(a), qualidade para revenda', 11.84, 0, 'Organico Bom Gosto'),
+('Repolho', 'Repolho selecionado(a), qualidade para revenda', 9.67, 0, 'Colheita Fresca'),
+('Brocolis', 'Brocolis selecionado(a), qualidade para revenda', 11.65, 0, NULL),
+('Couve-flor', 'Couve-flor selecionado(a), qualidade para revenda', 2.95, 1, 'Colheita Fresca'),
+('Pepino', 'Pepino selecionado(a), qualidade para revenda', 10.68, 0, 'Sitio Boa Terra'),
+('Abobrinha', 'Abobrinha selecionado(a), qualidade para revenda', 8.97, 0, 'Sitio Boa Terra'),
+('Berinjela', 'Berinjela selecionado(a), qualidade para revenda', 4.49, 0, 'Organico Bom Gosto'),
+('Pimentao Verde', 'Pimentao Verde selecionado(a), qualidade para revenda', 6.22, 0, 'Colheita Fresca'),
+('Chuchu', 'Chuchu selecionado(a), qualidade para revenda', 2.46, 0, 'Colheita Fresca'),
+('Beterraba', 'Beterraba selecionado(a), qualidade para revenda', 10.79, 0, 'Colheita Fresca'),
+('Vagem', 'Vagem selecionado(a), qualidade para revenda', 2.06, 0, 'Fazenda Verde');
+
+-- CATEGORIA (30 tuplas)
+INSERT INTO CATEGORIA (nm_categoria) VALUES
+('Frutas Citricas'),
+('Frutas Tropicais'),
+('Frutas Vermelhas'),
+('Frutas Secas'),
+('Verduras Folhosas'),
+('Verduras Organicas'),
+('Legumes Raizes'),
+('Legumes Frutos'),
+('Graos e Cereais'),
+('Temperos Frescos'),
+('Ervas Aromaticas'),
+('Cogumelos'),
+('Oleaginosas'),
+('Tuberculos'),
+('Hortalicas'),
+('Sucos Naturais'),
+('Polpas de Fruta'),
+('Produtos Organicos'),
+('Hidroponicos'),
+('Exoticos'),
+('Congelados'),
+('Enlatados e Conservas'),
+('Laticinios'),
+('Ovos'),
+('Paes Artesanais'),
+('Doces e Compotas'),
+('Bebidas Naturais'),
+('Cestas Prontas'),
+('Produtos Importados'),
+('Sazonais');
+
+-- ESTOQUE (30 tuplas - um lote por produto)
+INSERT INTO ESTOQUE (cd_produto, nr_lote, quantidade, dt_validade, dt_entrada) VALUES
+(1, 1, 205.36, '2026-04-18', '2026-03-21'),
+(2, 1, 127.779, '2026-06-01', '2026-05-21'),
+(3, 1, 422.805, '2026-09-09', '2026-08-14'),
+(4, 1, 399.863, '2026-04-12', '2026-04-05'),
+(5, 1, 157.702, '2026-08-17', '2026-06-29'),
+(6, 1, 418.933, '2026-10-02', '2026-08-28'),
+(7, 1, 235.329, '2026-03-12', '2026-03-02'),
+(8, 1, 29.122, '2026-06-22', '2026-04-25'),
+(9, 1, 91.769, '2026-09-10', '2026-08-03'),
+(10, 1, 223.162, '2026-06-02', '2026-05-13'),
+(11, 1, 164.553, '2026-04-02', '2026-03-13'),
+(12, 1, 221.516, '2026-09-10', '2026-08-07'),
+(13, 1, 50.147, '2026-08-18', '2026-07-06'),
+(14, 1, 277.306, '2026-09-15', '2026-08-09'),
+(15, 1, 296.023, '2026-04-29', '2026-04-06'),
+(16, 1, 226.035, '2026-09-01', '2026-08-05'),
+(17, 1, 135.471, '2026-07-01', '2026-06-15'),
+(18, 1, 338.898, '2026-04-29', '2026-03-22'),
+(19, 1, 487.834, '2026-04-25', '2026-03-18'),
+(20, 1, 281.159, '2026-08-17', '2026-07-08'),
+(21, 1, 29.76, '2026-07-06', '2026-06-29'),
+(22, 1, 325.122, '2026-06-25', '2026-06-04'),
+(23, 1, 378.712, '2026-07-25', '2026-05-31'),
+(24, 1, 52.429, '2026-06-21', '2026-05-01'),
+(25, 1, 335.41, '2026-05-20', '2026-03-27'),
+(26, 1, 299.314, '2026-06-07', '2026-05-25'),
+(27, 1, 41.281, '2026-08-13', '2026-07-18'),
+(28, 1, 410.484, '2026-06-11', '2026-04-14'),
+(29, 1, 393.988, '2026-08-15', '2026-06-27'),
+(30, 1, 249.695, '2026-06-11', '2026-04-16');
+
+-- PEDIDO (40 tuplas)
+INSERT INTO PEDIDO (nr_cliente, dt_venda, forma_pagamento, vl_total) VALUES
+(13, '2026-07-11', 'Cartao de Debito', 121.68),
+(8, '2026-06-15', 'Dinheiro', 4.19),
+(24, '2026-06-24', 'Pix', 3.27),
+(17, '2026-07-20', 'Boleto', 14.89),
+(4, '2026-07-04', 'Cartao de Debito', 49.35),
+(23, '2026-07-28', 'Cartao de Credito', 68.68),
+(20, '2026-07-07', 'Pix', 13.98),
+(7, '2026-06-16', 'Cartao de Credito', 43.35),
+(28, '2026-06-10', 'Pix', 120.68),
+(6, '2026-08-31', 'Pix', 43.73),
+(3, '2026-08-27', 'Cartao de Debito', 46.75),
+(22, '2026-07-15', 'Dinheiro', 45.98),
+(18, '2026-08-09', 'Cartao de Debito', 166.04),
+(29, '2026-07-09', 'Cartao de Credito', 35.24),
+(23, '2026-08-30', 'Cartao de Credito', 17.32),
+(26, '2026-07-17', 'Boleto', 32.94),
+(8, '2026-06-16', 'Cartao de Credito', 174.85),
+(26, '2026-06-18', 'Cartao de Credito', 33.29),
+(26, '2026-08-03', 'Dinheiro', 77.25),
+(12, '2026-08-10', 'Boleto', 55.04),
+(12, '2026-07-30', 'Boleto', 28.07),
+(5, '2026-08-18', 'Dinheiro', 15.77),
+(3, '2026-07-10', 'Pix', 77.89),
+(23, '2026-09-01', 'Pix', 92.84),
+(17, '2026-07-23', 'Pix', 98.64),
+(27, '2026-08-13', 'Dinheiro', 102.37),
+(5, '2026-07-11', 'Dinheiro', 24.25),
+(15, '2026-07-30', 'Boleto', 17.56),
+(12, '2026-06-17', 'Boleto', 155.31),
+(21, '2026-08-15', 'Cartao de Credito', 105.76),
+(25, '2026-06-17', 'Pix', 11.66),
+(17, '2026-06-08', 'Dinheiro', 20.5),
+(17, '2026-06-20', 'Cartao de Debito', 126.87),
+(6, '2026-06-21', 'Cartao de Debito', 80.8),
+(30, '2026-08-30', 'Cartao de Credito', 32.52),
+(12, '2026-08-06', 'Cartao de Debito', 47.88),
+(28, '2026-06-11', 'Cartao de Debito', 26.09),
+(7, '2026-08-21', 'Boleto', 17.61),
+(9, '2026-06-17', 'Cartao de Debito', 19.62),
+(20, '2026-08-08', 'Dinheiro', 60.53);
+
+-- POSSUI (45 tuplas)
+INSERT INTO POSSUI (cd_produto, nr_venda_mes, quantidade) VALUES
+(18, 20, 13.9),
+(7, 26, 8.03),
+(5, 1, 12.12),
+(29, 29, 11.04),
+(21, 25, 1.64),
+(12, 28, 9.24),
+(27, 19, 12.42),
+(30, 15, 8.41),
+(11, 14, 5.16),
+(25, 4, 1.66),
+(4, 36, 10.08),
+(15, 5, 4.94),
+(9, 35, 9.24),
+(2, 23, 6.68),
+(10, 27, 10.5),
+(24, 26, 5.6),
+(23, 3, 1.11),
+(21, 33, 13.12),
+(29, 40, 5.61),
+(17, 17, 14.97),
+(9, 22, 4.48),
+(28, 29, 14.71),
+(2, 13, 14.24),
+(28, 32, 1.59),
+(26, 10, 9.74),
+(14, 39, 5.77),
+(11, 25, 12.12),
+(25, 24, 10.35),
+(16, 21, 14.32),
+(29, 12, 2.57),
+(16, 12, 9.31),
+(11, 34, 11.83),
+(2, 31, 1.0),
+(3, 2, 1.47),
+(25, 30, 11.79),
+(26, 37, 5.81),
+(10, 7, 6.05),
+(12, 32, 8.73),
+(12, 38, 9.27),
+(2, 9, 10.35),
+(10, 16, 14.26),
+(2, 6, 5.89),
+(13, 18, 11.56),
+(7, 11, 8.82),
+(7, 8, 8.18);
+
+-- DEVOLUCAO (30 tuplas)
+INSERT INTO DEVOLUCAO (nr_venda_mes, dt_devolucao, forma_resolucao, motivo, devolucao_efetivada) VALUES
+(33, '2026-06-25', 'Reparo', 'Produto amassado na entrega', 1),
+(11, '2026-08-30', 'Reparo', 'Cliente desistiu da compra', 1),
+(38, '2026-08-25', 'Credito', 'Quantidade incorreta', 1),
+(10, '2026-09-14', 'Credito', 'Qualidade abaixo do esperado', 0),
+(39, '2026-06-23', 'Reparo', 'Item fora da validade', 0),
+(22, '2026-08-27', 'Troca', 'Produto divergente do pedido', 1),
+(3, '2026-06-26', 'Credito', 'Cliente desistiu da compra', 1),
+(2, '2026-06-17', 'Troca', 'Produto divergente do pedido', 0),
+(6, '2026-08-11', 'Reparo', 'Item fora da validade', 0),
+(40, '2026-08-23', 'Reembolso', 'Produto divergente do pedido', 0),
+(21, '2026-08-11', 'Credito', 'Item fora da validade', 0),
+(25, '2026-07-31', 'Reparo', 'Cliente desistiu da compra', 0),
+(19, '2026-08-11', 'Troca', 'Produto amassado na entrega', 0),
+(9, '2026-06-19', 'Reparo', 'Item fora da validade', 1),
+(30, '2026-08-21', 'Troca', 'Produto amassado na entrega', 1),
+(7, '2026-07-17', 'Reparo', 'Produto divergente do pedido', 1),
+(28, '2026-08-13', 'Troca', 'Cliente desistiu da compra', 1),
+(14, '2026-07-14', 'Credito', 'Cliente desistiu da compra', 1),
+(20, '2026-08-17', 'Troca', 'Quantidade incorreta', 1),
+(26, '2026-08-19', 'Credito', 'Produto amassado na entrega', 1),
+(1, '2026-07-19', 'Credito', 'Quantidade incorreta', 1),
+(16, '2026-07-19', 'Reembolso', 'Produto amassado na entrega', 1),
+(18, '2026-07-01', 'Credito', 'Quantidade incorreta', 0),
+(37, '2026-06-24', 'Reembolso', 'Item fora da validade', 1),
+(17, '2026-06-23', 'Troca', 'Produto amassado na entrega', 1),
+(8, '2026-06-28', 'Credito', 'Cliente desistiu da compra', 1),
+(4, '2026-07-23', 'Reembolso', 'Produto divergente do pedido', 0),
+(13, '2026-08-15', 'Reembolso', 'Cliente desistiu da compra', 0),
+(36, '2026-08-18', 'Credito', 'Quantidade incorreta', 1),
+(29, '2026-07-01', 'Reparo', 'Qualidade abaixo do esperado', 1);
+
+-- PERDA (30 tuplas)
+INSERT INTO PERDA (cd_produto, nr_lote, dt_perda, qt_perdida, motivo_perda, descarte_efetivado) VALUES
+(16, 1, '2026-09-01', 0.182, 'Praga ou inseto identificado', 1),
+(14, 1, '2026-08-29', 4.004, 'Umidade excessiva no armazenamento', 0),
+(21, 1, '2026-06-30', 3.025, 'Praga ou inseto identificado', 0),
+(26, 1, '2026-06-07', 2.935, 'Excesso de maturacao', 1),
+(19, 1, '2026-04-18', 0.936, 'Umidade excessiva no armazenamento', 1),
+(25, 1, '2026-05-20', 1.963, 'Umidade excessiva no armazenamento', 1),
+(19, 1, '2026-03-26', 1.035, 'Quebra no transporte', 1),
+(5, 1, '2026-07-26', 3.483, 'Quebra no transporte', 1),
+(20, 1, '2026-08-08', 4.377, 'Umidade excessiva no armazenamento', 1),
+(23, 1, '2026-06-09', 2.642, 'Produto vencido', 1),
+(22, 1, '2026-06-20', 2.675, 'Praga ou inseto identificado', 0),
+(15, 1, '2026-04-24', 1.777, 'Praga ou inseto identificado', 1),
+(28, 1, '2026-05-31', 3.436, 'Umidade excessiva no armazenamento', 1),
+(16, 1, '2026-08-12', 4.791, 'Praga ou inseto identificado', 1),
+(8, 1, '2026-05-15', 3.879, 'Umidade excessiva no armazenamento', 1),
+(23, 1, '2026-07-02', 1.653, 'Praga ou inseto identificado', 1),
+(30, 1, '2026-06-06', 3.636, 'Praga ou inseto identificado', 1),
+(22, 1, '2026-06-22', 1.961, 'Quebra no transporte', 0),
+(25, 1, '2026-05-18', 0.818, 'Produto amassado', 1),
+(23, 1, '2026-06-06', 1.797, 'Quebra no transporte', 1),
+(24, 1, '2026-06-01', 1.149, 'Produto vencido', 1),
+(18, 1, '2026-04-09', 0.773, 'Produto vencido', 1),
+(8, 1, '2026-05-11', 0.349, 'Produto vencido', 1),
+(8, 1, '2026-04-29', 0.591, 'Praga ou inseto identificado', 1),
+(4, 1, '2026-04-11', 3.877, 'Produto amassado', 0),
+(30, 1, '2026-04-27', 2.094, 'Quebra no transporte', 1),
+(7, 1, '2026-03-07', 1.674, 'Umidade excessiva no armazenamento', 1),
+(25, 1, '2026-04-02', 3.296, 'Excesso de maturacao', 1),
+(24, 1, '2026-05-04', 4.575, 'Excesso de maturacao', 1),
+(27, 1, '2026-07-24', 4.676, 'Produto amassado', 0);
+
+-- FORNECE (30 tuplas)
+INSERT INTO FORNECE (cd_fornecedor, cd_produto, modo_transporte) VALUES
+(15, 21, 'Rodoviario'),
+(7, 26, 'Maritimo'),
+(6, 24, 'Rodoviario'),
+(28, 21, 'Ferroviario'),
+(25, 7, 'Ferroviario'),
+(28, 30, 'Maritimo'),
+(24, 11, 'Aereo'),
+(30, 24, 'Ferroviario'),
+(10, 15, 'Rodoviario'),
+(9, 23, 'Aereo'),
+(20, 4, 'Maritimo'),
+(13, 26, 'Ferroviario'),
+(6, 20, 'Maritimo'),
+(29, 13, 'Aereo'),
+(21, 18, 'Aereo'),
+(17, 11, 'Aereo'),
+(4, 11, 'Rodoviario'),
+(30, 11, 'Aereo'),
+(28, 17, 'Aereo'),
+(2, 1, 'Ferroviario'),
+(6, 1, 'Rodoviario'),
+(16, 6, 'Rodoviario'),
+(26, 10, 'Maritimo'),
+(10, 29, 'Aereo'),
+(17, 16, 'Ferroviario'),
+(27, 14, 'Maritimo'),
+(19, 22, 'Aereo'),
+(10, 19, 'Rodoviario'),
+(15, 9, 'Aereo'),
+(29, 5, 'Aereo');
+
+-- TEM (30 tuplas)
+INSERT INTO TEM (cd_categoria, cd_produto) VALUES
+(2, 27),
+(20, 8),
+(15, 24),
+(7, 23),
+(18, 26),
+(18, 29),
+(17, 15),
+(19, 18),
+(15, 17),
+(16, 25),
+(23, 12),
+(5, 6),
+(7, 25),
+(8, 5),
+(3, 30),
+(28, 26),
+(11, 28),
+(20, 12),
+(18, 30),
+(17, 7),
+(19, 4),
+(22, 27),
+(3, 17),
+(14, 23),
+(4, 22),
+(19, 16),
+(3, 29),
+(16, 5),
+(8, 22),
+(25, 20);
