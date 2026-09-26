@@ -205,3 +205,78 @@ POSSUI (cd_produto*, nr_venda_mes*, quantidade)
 | cd_produto | INT | - | Não | PK, FK | Produto incluído no pedido |
 | nr_venda_mes | INT | - | Não | PK, FK | Pedido ao qual o item pertence |
 | quantidade | DECIMAL | (10,3) | Não | - | Quantidade do produto vendida nesse pedido |
+
+---
+
+## Etapa 03 — Interface funcional com dashboard
+
+- Aplicação Java (Swing + JDBC): pasta [`app/`](app/) — detalhes em [`app/README.md`](app/README.md)
+- SQL das consultas: [`consultas.sql`](consultas.sql)
+
+### Como rodar o projeto
+
+#### Pré-requisitos
+
+- **JDK 17 ou superior** (testado com JDK 21) — verifique com `java -version`
+- **MySQL 8 ou superior** em execução (ex.: `brew services start mysql` no macOS)
+- O driver JDBC do MySQL já vem no projeto: `app/lib/mysql-connector-j-8.2.0.jar`
+
+#### 1. Criar o banco de dados
+
+Execute os scripts **nesta ordem**, pelo DBeaver (abrir o arquivo e executar com *Alt+X*) ou pelo terminal, na raiz do repositório:
+
+```bash
+mysql -u root -p < modelo_fisico.sql
+mysql -u root -p hortifruti < inser_to.sql
+```
+
+O primeiro cria o banco `hortifruti` e as tabelas; o segundo insere os dados.
+Se o banco já existir, apague-o antes (`DROP DATABASE hortifruti;`) para evitar erros de tabela/dado duplicado.
+
+#### 2. Configurar o acesso ao MySQL
+
+Ao abrir, a aplicação mostra a tela **"Conectar ao MySQL"**, onde se informa:
+
+| Campo | Valor |
+|---|---|
+| URL JDBC | `jdbc:mysql://localhost:3306/hortifruti` (já preenchido) |
+| Usuário | `root` (ou outro usuário do seu MySQL) |
+| Senha | a **senha do seu MySQL** (a mesma usada no DBeaver) |
+
+Para não digitar a senha toda vez, preencha `db.password` em [`app/db.properties`](app/db.properties)
+(não envie esse arquivo com a senha para o GitHub).
+
+#### 3. Executar
+
+**Pelo terminal (macOS/Linux):**
+
+```bash
+./app/run.sh
+```
+
+**Pelo terminal (Windows):** dar dois cliques em `app\run.bat` ou executar `app\run.bat` no prompt.
+
+**Pelo IntelliJ IDEA:**
+1. *File → Open* e selecione a pasta `Profrutas-BD` (ou a pasta `app`).
+2. Confirme que o driver está nas dependências: *File → Project Structure → Modules → Dependencies*
+   deve listar `mysql-connector-j-8.2.0.jar`. Se não listar, clique em **+ → JARs or Directories**
+   e selecione `app/lib/mysql-connector-j-8.2.0.jar`.
+3. Abra `app/src/main/Exec.java` e clique em **Run**.
+
+**Pelo Eclipse:**
+1. *File → Import → General → Existing Projects into Workspace* e selecione a pasta `app`.
+2. Clique com o botão direito em `src/main/Exec.java` → *Run As → Java Application*.
+
+#### Problemas comuns
+
+| Mensagem | Causa / solução |
+|---|---|
+| `No suitable driver found for jdbc:mysql://...` | O `.jar` do driver não está no classpath — veja o passo 2 do IntelliJ acima. |
+| `Usuario ou senha do MySQL incorretos` | Senha errada na tela de conexão ou em `db.properties`. |
+| `O banco 'hortifruti' nao existe` | Rode `modelo_fisico.sql` e `inser_to.sql` (passo 1). |
+| `Nao foi possivel conectar ao MySQL` | O servidor MySQL não está em execução ou usa outra porta (ajuste a URL). |
+
+#### Gráficos de Estatística
+
+Coloque as imagens (PNG/JPG) dos gráficos feitos para a disciplina de Estatística em `app/graficos/`
+ou use o botão **"Adicionar imagem"** na aba *Graficos Estatistica* da aplicação.
