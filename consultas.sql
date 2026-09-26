@@ -281,6 +281,79 @@ ORDER BY qtd DESC;
 
 
 -- =========================================================
+-- GRAFICO DE DISPERSAO (aba "Correlacao")
+-- Cada consulta gera os pares (X, Y). A aplicacao calcula o
+-- coeficiente de Pearson (r), o R2 e a reta de regressao y = a + b*x.
+-- =========================================================
+
+-- Pedidos: quantidade de itens (X) x valor total (Y)
+SELECT CONCAT('Pedido ', pe.nr_venda_mes) AS rotulo,
+       SUM(ps.quantidade)                 AS x,
+       pe.vl_total                        AS y
+FROM PEDIDO pe
+JOIN POSSUI ps ON ps.nr_venda_mes = pe.nr_venda_mes
+GROUP BY pe.nr_venda_mes, pe.vl_total;
+
+-- Clientes: numero de pedidos (X) x total gasto (Y)
+SELECT CONCAT('Cliente ', cl.nr_cliente) AS rotulo,
+       COUNT(pe.nr_venda_mes)             AS x,
+       SUM(pe.vl_total)                   AS y
+FROM CLIENTE cl
+JOIN PEDIDO pe ON pe.nr_cliente = cl.nr_cliente
+GROUP BY cl.nr_cliente;
+
+-- Produtos: preco (X) x faturamento (Y)
+SELECT p.nome                                      AS rotulo,
+       p.valor_kg_ou_unitario                      AS x,
+       SUM(ps.quantidade * p.valor_kg_ou_unitario) AS y
+FROM PRODUTO p
+JOIN POSSUI ps ON ps.cd_produto = p.cd_produto
+GROUP BY p.cd_produto, p.nome, p.valor_kg_ou_unitario;
+
+-- Produtos: preco (X) x quantidade vendida (Y)
+SELECT p.nome                 AS rotulo,
+       p.valor_kg_ou_unitario AS x,
+       SUM(ps.quantidade)     AS y
+FROM PRODUTO p
+JOIN POSSUI ps ON ps.cd_produto = p.cd_produto
+GROUP BY p.cd_produto, p.nome, p.valor_kg_ou_unitario;
+
+-- Lotes: vida util em dias (X) x quantidade perdida (Y)
+SELECT CONCAT(p.nome, ' - lote ', e.nr_lote)     AS rotulo,
+       DATEDIFF(e.dt_validade, e.dt_entrada)     AS x,
+       SUM(pr.qt_perdida)                        AS y
+FROM ESTOQUE e
+JOIN PRODUTO p ON p.cd_produto = e.cd_produto
+JOIN PERDA pr  ON pr.cd_produto = e.cd_produto
+              AND pr.nr_lote    = e.nr_lote
+GROUP BY e.cd_produto, e.nr_lote, p.nome, e.dt_validade, e.dt_entrada;
+
+-- Conferencia: coeficiente de Pearson e reta de regressao calculados
+-- direto no SQL (par quantidade x valor do pedido). Resultado: r = 0,6696
+--   r = (n*Sxy - Sx*Sy) / sqrt((n*Sxx - Sx^2) * (n*Syy - Sy^2))
+--   b = (n*Sxy - Sx*Sy) / (n*Sxx - Sx^2)        a = (Sy - b*Sx) / n
+WITH pares AS (
+    SELECT SUM(ps.quantidade) AS x, pe.vl_total AS y
+    FROM PEDIDO pe
+    JOIN POSSUI ps ON ps.nr_venda_mes = pe.nr_venda_mes
+    GROUP BY pe.nr_venda_mes, pe.vl_total
+),
+somas AS (
+    SELECT COUNT(*) AS n, SUM(x) AS sx, SUM(y) AS sy,
+           SUM(x * y) AS sxy, SUM(x * x) AS sxx, SUM(y * y) AS syy
+    FROM pares
+)
+SELECT n,
+       ROUND((n * sxy - sx * sy)
+             / SQRT((n * sxx - sx * sx) * (n * syy - sy * sy)), 4)          AS pearson_r,
+       ROUND(POW((n * sxy - sx * sy)
+             / SQRT((n * sxx - sx * sx) * (n * syy - sy * sy)), 2), 4)     AS r2,
+       ROUND((n * sxy - sx * sy) / (n * sxx - sx * sx), 4)                  AS inclinacao_b,
+       ROUND((sy - (n * sxy - sx * sy) / (n * sxx - sx * sx) * sx) / n, 4)  AS intercepto_a
+FROM somas;
+
+
+-- =========================================================
 -- COMANDOS DE MANUTENCAO (INSERT / UPDATE / DELETE) usados pela
 -- interface - sempre via PreparedStatement
 -- =========================================================

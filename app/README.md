@@ -28,6 +28,7 @@ Requer JDK 17 ou superior. O driver `mysql-connector-j-8.2.0.jar` já está em `
 | **Produtos** | Inserção, alteração, exclusão e busca na tabela `PRODUTO` |
 | **Funcionarios** | Inserção, alteração, exclusão e busca na tabela `FUNCIONARIO`, com escolha do supervisor (auto-relacionamento) |
 | **Consultas** | 8 consultas pré-definidas: mostra o SQL, aceita parâmetro quando houver, exibe o resultado em tabela e exporta CSV |
+| **Correlacao** | Gráfico de dispersão (scatter plot) com reta de regressão linear, coeficiente de Pearson (r) e R², para 5 pares de variáveis |
 | **Graficos Estatistica** | Galeria com os gráficos feitos para a disciplina de Estatística (imagens da pasta `graficos/`) |
 
 Erros do banco (violação de FK, CHECK, UNIQUE...) são traduzidos para mensagens claras — por exemplo,
@@ -54,11 +55,13 @@ O SQL completo está em [`../consultas.sql`](../consultas.sql) e em `src/dao/Con
 src/
   main/Exec.java              ponto de entrada
   util/ConnectionFactory.java conexão JDBC (lê db.properties)
+  util/Estatistica.java       Pearson, R² e reta de regressão
   model/                      Cliente, Produto, Funcionario, Consulta, ResultadoConsulta
   dao/                        ClienteDAO, ProdutoDAO, FuncionarioDAO (CRUD),
-                              DashboardDAO, ConsultaDAO, Consultas (SQL das consultas)
+                              DashboardDAO, ConsultaDAO, Consultas (SQL das consultas),
+                              CorrelacaoDAO (pontos do gráfico de dispersão)
   view/                       telas Swing (MainFrame, CrudPanel e cadastros, Dashboard, Consultas...)
-  view/chart/                 gráficos desenhados em Java2D (barras, colunas, rosca)
+  view/chart/                 gráficos desenhados em Java2D (barras, colunas, rosca, dispersão)
 lib/mysql-connector-j-8.2.0.jar
 graficos/                     coloque aqui os PNG/JPG dos gráficos de Estatística
 ```

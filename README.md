@@ -280,3 +280,159 @@ Para não digitar a senha toda vez, preencha `db.password` em [`app/db.propertie
 
 Coloque as imagens (PNG/JPG) dos gráficos feitos para a disciplina de Estatística em `app/graficos/`
 ou use o botão **"Adicionar imagem"** na aba *Graficos Estatistica* da aplicação.
+
+---
+
+## Estrutura do projeto
+
+O projeto é dividido em **camadas**, cada uma com uma responsabilidade — o mesmo padrão do projeto-modelo
+da disciplina (`util` / `model` / `dao` / `main`), com uma camada a mais, `view`, para a interface gráfica.
+
+### Visão geral
+
+```
+Profrutas-BD/
+├── modelo_fisico.sql     cria o banco e as tabelas (Etapa 02)
+├── inser_to.sql          insere os dados (Etapa 02)
+├── consultas.sql         SQL das consultas (entregável 2 da Etapa 03)
+├── README.md             documentação do projeto
+└── app/                  a aplicação Java (entregável 1 da Etapa 03)
+    ├── src/              código-fonte
+    ├── lib/              driver JDBC do MySQL
+    ├── graficos/         imagens dos gráficos de Estatística
+    ├── db.properties     usuário/senha do banco
+    ├── run.sh / run.bat  scripts para compilar e rodar
+    └── .classpath, .project, .iml, .idea/   configuração do Eclipse e do IntelliJ
+```
+
+### Como as camadas conversam
+
+```
+ [ view ]  telas que o usuário vê e clica
+    │  chama
+    ▼
+ [ dao ]   onde está o SQL — monta o comando e manda ao banco
+    │  usa
+    ▼
+ [ util ]  abre a conexão com o MySQL (JDBC)
+    │
+    ▼
+  MySQL (banco hortifruti)
+
+ [ model ] objetos simples (Cliente, Produto...) que carregam os dados entre as camadas
+```
+
+A tela **nunca** escreve SQL: ela pede ao DAO, o DAO executa o SQL e devolve objetos do `model`.
+
+### Pacote por pacote (`app/src/`)
+
+#### `main/`
+- **`Exec.java`** — onde o programa começa (método `main`). Aplica o visual, abre a tela de conexão e, se conectar, abre a janela principal.
+
+#### `util/`
+- **`ConnectionFactory.java`** — a "fábrica de conexões". Guarda URL, usuário e senha do banco (lidos do `db.properties` ou da tela de conexão). O método `getConnection()` usa o `DriverManager` do JDBC. Todo DAO pede a conexão aqui.
+- **`Estatistica.java`** — cálculos estatísticos do gráfico de dispersão: coeficiente de correlação de **Pearson** (r), **R²**, **reta de regressão linear** por mínimos quadrados (y = a + b·x) e a classificação da força da correlação.
+
+#### `model/` — as entidades
+Classes que só guardam dados (atributos + getters/setters). Cada uma espelha uma tabela:
+- **`Cliente.java`** — tabela CLIENTE.
+- **`Produto.java`** — tabela PRODUTO.
+- **`Funcionario.java`** — tabela FUNCIONARIO (tem também `nomeSupervisor`, que vem de um JOIN).
+- **`Consulta.java`** — descreve uma consulta pronta: título, descrição, SQL e (se tiver) o parâmetro.
+- **`ResultadoConsulta.java`** — resultado de uma consulta: nomes das colunas + linhas.
+
+#### `dao/` — acesso ao banco (**onde está o SQL explícito**)
+DAO = *Data Access Object*.
+- **`ClienteDAO`, `ProdutoDAO`, `FuncionarioDAO`** — o CRUD de cada tabela: `inserir()`, `listar()`, `atualizar()`, `excluir()`. Cada um tem o SQL escrito (`INSERT INTO ... VALUES (?, ?...)`) e usa `PreparedStatement`, que preenche os `?` com segurança (evita *SQL injection*).
+- **`Consultas.java`** — a lista das 8 consultas, com o SQL completo de cada uma (é o mesmo SQL do `consultas.sql`).
+- **`ConsultaDAO.java`** — executa qualquer uma das 8 consultas e lê as colunas do resultado com `ResultSetMetaData`, por isso funciona para todas sem código específico.
+- **`DashboardDAO.java`** — as consultas que alimentam os indicadores e gráficos do dashboard.
+- **`CorrelacaoDAO.java`** — as consultas (com JOIN) que geram os pares (X, Y) do gráfico de dispersão.
+
+#### `view/` — a interface gráfica (Swing)
+- **`MainFrame.java`** — a janela principal com as 7 abas. Recarrega os dados sempre que se troca de aba.
+- **`ConexaoDialog.java`** — a tela inicial que pede usuário/senha e testa a conexão.
+- **`CrudPanel.java`** — **base comum** das telas de cadastro: monta tabela, busca, formulário e os botões Novo/Salvar/Excluir. Cada cadastro só diz *o que* fazer; o `CrudPanel` cuida de *como* mostrar.
+- **`ClientePanel`, `ProdutoPanel`, `FuncionarioPanel`** — os cadastros em si. Herdam do `CrudPanel`, validam os campos (CPF com 11 dígitos, valor > 0...) e chamam o DAO correspondente.
+- **`DashboardPanel.java`** — 6 cards de indicadores + 6 gráficos. Carrega os dados em segundo plano (`SwingWorker`) para a tela não travar.
+- **`ConsultasPanel.java`** — lista das consultas, caixa com o SQL, campo de parâmetro, tabela de resultado e exportação CSV.
+- **`CorrelacaoPanel.java`** — aba de correlação: escolha do par de variáveis, gráfico de dispersão, interpretação do resultado e o SQL que gera os pontos.
+- **`GraficosEstatisticaPanel.java`** — galeria que mostra as imagens da pasta `graficos/`.
+- **`UI.java`** — utilitários visuais: cores, fontes, formatação de moeda (R$) e a **tradução dos erros do MySQL** (ex.: erro 1451, violação de chave estrangeira, vira "não é possível excluir: registro vinculado a outras tabelas").
+
+#### `view/chart/` — gráficos
+Desenhados à mão com Java2D, sem nenhuma biblioteca externa:
+- **`Grafico.java`** — classe base (título, "sem dados", formato dos números).
+- **`GraficoBarras.java`** — barras horizontais (top produtos, categorias, perdas).
+- **`GraficoColunas.java`** — colunas verticais com linha de tendência (faturamento mensal).
+- **`GraficoRosca.java`** — rosca com legenda e percentuais (formas de pagamento, devoluções).
+- **`GraficoDispersao.java`** — **scatter plot** com a reta de regressão, o r de Pearson, o R², a equação da reta e *tooltip* com os valores de cada ponto.
+
+### Exemplo: o que acontece ao salvar um cliente novo
+
+1. Você preenche o formulário e clica em **Salvar** (`CrudPanel`).
+2. `ClientePanel.gravar()` valida os campos e monta um objeto `Cliente`.
+3. Chama `ClienteDAO.inserir(cliente)`.
+4. O DAO pede uma conexão à `ConnectionFactory` e executa `INSERT INTO CLIENTE (...) VALUES (?, ?, ...)`.
+5. O MySQL grava ou devolve um erro (ex.: CPF duplicado).
+6. Se deu certo, a tabela é recarregada (`listar()`); se deu erro, o `UI` mostra a mensagem traduzida.
+
+### Outros arquivos da pasta `app/`
+
+- **`lib/mysql-connector-j-8.2.0.jar`** — o driver JDBC: é o que permite o Java "falar" com o MySQL. Sem ele aparece o erro *"No suitable driver"*.
+- **`db.properties`** — configuração da conexão (para não deixar a senha fixa no código).
+- **`run.sh` / `run.bat`** — compilam (`javac`) e executam (`java`) sem precisar de IDE.
+- **`graficos/`** — onde ficam as imagens da disciplina de Estatística.
+- **`.classpath`, `.project`, `.settings/`** (Eclipse) e **`.iml`, `.idea/`** (IntelliJ) — dizem à IDE onde está o código e o driver.
+- **`bin/`** — `.class` compilados; gerada automaticamente, não precisa ser entregue.
+
+---
+
+## Consultas com JOIN
+
+Das 8 consultas, **7 usam JOIN** (o requisito era ao menos 1):
+
+| # | Consulta | JOINs utilizados |
+|---|---|---|
+| 1 | Faturamento por categoria | CATEGORIA ⋈ TEM ⋈ PRODUTO ⋈ POSSUI |
+| 2 | Ranking de clientes | CLIENTE ⋈ PEDIDO ⟕ DEVOLUCAO |
+| 3 | Hierarquia de funcionários | FUNCIONARIO ⋈ hierarquia (CTE recursiva) ⟕ FUNCIONARIO (auto-JOIN) |
+| 4 | Índice de perdas por lote | PERDA ⋈ ESTOQUE (FK composta) ⋈ PRODUTO |
+| 5 | Lotes vencidos / a vencer | ESTOQUE ⋈ PRODUTO ⟕ FORNECE ⟕ FORNECEDOR |
+| 6 | Conferência de pedidos | PEDIDO ⋈ CLIENTE ⋈ POSSUI ⋈ PRODUTO ⟕ DEVOLUCAO |
+| 7 | Vendas mensais × forma de pagamento | — (agregação condicional / pivot) |
+| 8 | Produtos nunca vendidos | PRODUTO ⟕ TEM ⟕ CATEGORIA + NOT EXISTS |
+
+(⋈ = INNER JOIN, ⟕ = LEFT JOIN). As consultas do gráfico de dispersão também usam JOIN.
+
+---
+
+## Gráfico de dispersão e correlação de Pearson
+
+A aba **Correlacao** mostra um *scatter plot* com:
+
+- os **pontos** (X, Y) obtidos do banco por consultas com JOIN (`CorrelacaoDAO`);
+- a **reta de regressão linear** (em vermelho), calculada por mínimos quadrados: `y = a + b·x`;
+- o **coeficiente de correlação de Pearson (r)**, o **R²** e a interpretação (fraca / moderada / forte, positiva / negativa).
+
+Fórmulas usadas (`util/Estatistica.java`):
+
+```
+r = Σ(x − x̄)(y − ȳ) / √( Σ(x − x̄)² · Σ(y − ȳ)² )
+b = Σ(x − x̄)(y − ȳ) / Σ(x − x̄)²        a = ȳ − b·x̄        R² = r²
+```
+
+Pares de variáveis disponíveis (resultados com os dados do `inser_to.sql`):
+
+| Variáveis (X × Y) | n | r | Interpretação |
+|---|---|---|---|
+| Pedidos: quantidade de itens × valor total | 40 | 0,670 | moderada positiva |
+| Clientes: nº de pedidos × total gasto | 23 | 0,795 | forte positiva |
+| Produtos: preço × faturamento | 24 | 0,692 | moderada positiva |
+| Produtos: preço × quantidade vendida | 24 | 0,121 | desprezível |
+| Lotes: vida útil (dias) × quantidade perdida | 19 | 0,479 | fraca positiva |
+
+Classificação usada para |r|: < 0,3 desprezível · 0,3–0,5 fraca · 0,5–0,7 moderada · 0,7–0,9 forte · ≥ 0,9 muito forte.
+
+O arquivo `consultas.sql` traz também uma versão do cálculo de Pearson e da reta **feita inteiramente em SQL**,
+que confere com o valor mostrado na aplicação (r = 0,6696 para o primeiro par).

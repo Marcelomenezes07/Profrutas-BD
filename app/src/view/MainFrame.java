@@ -12,6 +12,7 @@ public class MainFrame extends JFrame {
     private final ProdutoPanel produtos = new ProdutoPanel();
     private final FuncionarioPanel funcionarios = new FuncionarioPanel();
     private final ConsultasPanel consultas = new ConsultasPanel();
+    private final CorrelacaoPanel correlacao = new CorrelacaoPanel();
     private final GraficosEstatisticaPanel estatistica = new GraficosEstatisticaPanel();
 
     public MainFrame() {
@@ -28,6 +29,7 @@ public class MainFrame extends JFrame {
         abas.addTab("Produtos", produtos);
         abas.addTab("Funcionarios", funcionarios);
         abas.addTab("Consultas", consultas);
+        abas.addTab("Correlacao", correlacao);
         abas.addTab("Graficos Estatistica", estatistica);
 
         // recarrega os dados sempre que a aba e aberta
@@ -37,6 +39,7 @@ public class MainFrame extends JFrame {
             else if (atual == clientes) clientes.carregar();
             else if (atual == produtos) produtos.carregar();
             else if (atual == funcionarios) funcionarios.carregar();
+            else if (atual == correlacao) correlacao.carregar();
             else if (atual == estatistica) estatistica.carregar();
         });
 
