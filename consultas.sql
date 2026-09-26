@@ -1,14 +1,26 @@
 -- =========================================================
 -- Sistema Administrativo para Empresa de Varejo do Ramo Hortifruti
--- Etapa 03 - SQL das consultas utilizadas na interface (JDBC)
+-- Etapa 03 - SQL utilizado pela interface (Java + JDBC)
 -- Banco: MySQL 8+ | Schema: hortifruti
 --
--- Obs.: nas consultas parametrizadas, o "?" e preenchido pela
--- aplicacao via PreparedStatement. Aqui aparece um valor de exemplo
--- em SET @param para permitir a execucao direta no DBeaver/MySQL.
+-- CONTEUDO
+--   PARTE 1 - Consultas da aba "Consultas" (1 a 8)
+--   PARTE 2 - Consultas do Dashboard (indicadores e graficos)
+--   PARTE 3 - Grafico de dispersao + correlacao de Pearson
+--   PARTE 4 - Insercao / alteracao / exclusao (CLIENTE, PRODUTO,
+--             FUNCIONARIO)
+--
+-- Obs.: na aplicacao, os valores variaveis sao "?" preenchidos via
+-- PreparedStatement. Neste arquivo eles aparecem como valores de
+-- exemplo (ou SET @variavel) para que tudo possa ser executado
+-- diretamente no DBeaver / MySQL.
 -- =========================================================
 USE hortifruti;
 
+
+-- #########################################################
+-- PARTE 1 - CONSULTAS DA ABA "CONSULTAS"
+-- #########################################################
 
 -- =========================================================
 -- CONSULTA 1 - Faturamento por categoria de produto
@@ -233,9 +245,10 @@ GROUP BY p.cd_produto, p.nome, p.marca, p.valor_kg_ou_unitario, p.vendido_unitar
 ORDER BY qtd_em_estoque DESC;
 
 
--- =========================================================
--- CONSULTAS DO DASHBOARD (indicadores e graficos)
--- =========================================================
+-- #########################################################
+-- PARTE 2 - CONSULTAS DO DASHBOARD (indicadores e graficos)
+-- Usadas em dao/DashboardDAO.java
+-- #########################################################
 
 -- Indicadores (cards)
 SELECT (SELECT COUNT(*) FROM CLIENTE)                                AS total_clientes,
@@ -267,6 +280,16 @@ GROUP BY p.cd_produto, p.nome
 ORDER BY qtd DESC
 LIMIT 10;
 
+-- Grafico: faturamento por categoria (8 maiores)
+SELECT c.nm_categoria, SUM(ps.quantidade * p.valor_kg_ou_unitario) AS faturamento
+FROM CATEGORIA c
+JOIN TEM     t  ON t.cd_categoria = c.cd_categoria
+JOIN PRODUTO p  ON p.cd_produto   = t.cd_produto
+JOIN POSSUI  ps ON ps.cd_produto  = p.cd_produto
+GROUP BY c.cd_categoria, c.nm_categoria
+ORDER BY faturamento DESC
+LIMIT 8;
+
 -- Grafico: quantidade perdida por motivo
 SELECT motivo_perda, SUM(qt_perdida) AS qtd
 FROM PERDA
@@ -280,11 +303,12 @@ GROUP BY forma_resolucao
 ORDER BY qtd DESC;
 
 
--- =========================================================
--- GRAFICO DE DISPERSAO (aba "Correlacao")
--- Cada consulta gera os pares (X, Y). A aplicacao calcula o
--- coeficiente de Pearson (r), o R2 e a reta de regressao y = a + b*x.
--- =========================================================
+-- #########################################################
+-- PARTE 3 - GRAFICO DE DISPERSAO (aba "Correlacao")
+-- Usadas em dao/CorrelacaoDAO.java. Cada consulta gera os pares
+-- (X, Y); a aplicacao (util/Estatistica.java) calcula o coeficiente
+-- de Pearson (r), o R2 e a reta de regressao y = a + b*x.
+-- #########################################################
 
 -- Pedidos: quantidade de itens (X) x valor total (Y)
 SELECT CONCAT('Pedido ', pe.nr_venda_mes) AS rotulo,
@@ -353,25 +377,216 @@ SELECT n,
 FROM somas;
 
 
+-- #########################################################
+-- PARTE 4 - INSERCAO / ALTERACAO / EXCLUSAO
+-- Tabelas manipuladas pela interface: CLIENTE, PRODUTO e FUNCIONARIO
+-- (abas "Clientes", "Produtos" e "Funcionarios").
+--
+-- Para cada tabela ha:
+--   (a) o comando EXATO usado na aplicacao (com "?"), a classe/metodo
+--       Java que o executa e o botao da tela que o dispara;
+--   (b) um exemplo executavel com valores reais, seguido de SELECT
+--       para conferir o efeito.
+--
+-- Os exemplos rodam dentro de uma TRANSACAO encerrada com ROLLBACK,
+-- ou seja, podem ser executados quantas vezes quiser sem alterar os
+-- dados do banco. Para gravar de verdade, troque ROLLBACK por COMMIT.
+-- #########################################################
+
+
 -- =========================================================
--- COMANDOS DE MANUTENCAO (INSERT / UPDATE / DELETE) usados pela
--- interface - sempre via PreparedStatement
+-- 4.1 CLIENTE  (dao/ClienteDAO.java - aba "Clientes")
 -- =========================================================
 
--- CLIENTE
--- INSERT INTO CLIENTE (cpf_cnpj, telefone, telefone2, cep, rua, bairro, numero, apartamento) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
--- UPDATE CLIENTE SET cpf_cnpj=?, telefone=?, telefone2=?, cep=?, rua=?, bairro=?, numero=?, apartamento=? WHERE nr_cliente=?;
--- DELETE FROM CLIENTE WHERE nr_cliente=?;
--- SELECT * FROM CLIENTE ORDER BY nr_cliente;
+-- (a) Comandos usados na aplicacao ---------------------------
+--
+-- LISTAR  - ClienteDAO.listar()    - ao abrir a aba
+--   SELECT nr_cliente, cpf_cnpj, telefone, telefone2, cep, rua, bairro, numero, apartamento
+--   FROM CLIENTE ORDER BY nr_cliente;
+--
+-- INSERIR - ClienteDAO.inserir()   - botao "Salvar" com "Novo registro"
+--   INSERT INTO CLIENTE (cpf_cnpj, telefone, telefone2, cep, rua, bairro, numero, apartamento)
+--   VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+--   (nr_cliente e AUTO_INCREMENT, por isso nao e informado)
+--
+-- ALTERAR - ClienteDAO.atualizar() - botao "Salvar" com um registro selecionado
+--   UPDATE CLIENTE SET cpf_cnpj=?, telefone=?, telefone2=?, cep=?, rua=?, bairro=?,
+--          numero=?, apartamento=?
+--   WHERE nr_cliente=?;
+--
+-- EXCLUIR - ClienteDAO.excluir()   - botao "Excluir" (pede confirmacao)
+--   DELETE FROM CLIENTE WHERE nr_cliente=?;
 
--- PRODUTO
--- INSERT INTO PRODUTO (nome, descricao, valor_kg_ou_unitario, vendido_unitario, marca) VALUES (?, ?, ?, ?, ?);
--- UPDATE PRODUTO SET nome=?, descricao=?, valor_kg_ou_unitario=?, vendido_unitario=?, marca=? WHERE cd_produto=?;
--- DELETE FROM PRODUTO WHERE cd_produto=?;
--- SELECT * FROM PRODUTO ORDER BY cd_produto;
+-- (b) Exemplo executavel -------------------------------------
+START TRANSACTION;
 
--- FUNCIONARIO
--- INSERT INTO FUNCIONARIO (nome, cpf, telefone, cep, rua, bairro, numero, apartamento, nr_funcionario_supervisor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
--- UPDATE FUNCIONARIO SET nome=?, cpf=?, telefone=?, cep=?, rua=?, bairro=?, numero=?, apartamento=?, nr_funcionario_supervisor=? WHERE nr_funcionario=?;
--- DELETE FROM FUNCIONARIO WHERE nr_funcionario=?;
--- SELECT f.*, s.nome AS nome_supervisor FROM FUNCIONARIO f LEFT JOIN FUNCIONARIO s ON s.nr_funcionario = f.nr_funcionario_supervisor ORDER BY f.nr_funcionario;
+-- INSERT: novo cliente pessoa fisica (telefone2 e apartamento ficam NULL)
+INSERT INTO CLIENTE (cpf_cnpj, telefone, telefone2, cep, rua, bairro, numero, apartamento)
+VALUES ('999.888.777-66', '81999990000', NULL, '50050-000', 'Rua do Sol', 'Boa Vista', '120', NULL);
+
+SET @novo_cliente = LAST_INSERT_ID();          -- codigo gerado pelo AUTO_INCREMENT
+SELECT * FROM CLIENTE WHERE nr_cliente = @novo_cliente;
+
+-- UPDATE: cliente mudou de endereco e informou um segundo telefone
+UPDATE CLIENTE
+SET telefone2   = '81988887777',
+    rua         = 'Av. Rui Barbosa',
+    bairro      = 'Gracas',
+    numero      = '455',
+    apartamento = '302'
+WHERE nr_cliente = @novo_cliente;
+
+SELECT * FROM CLIENTE WHERE nr_cliente = @novo_cliente;
+
+-- DELETE: remove o cliente (possivel porque ele nao tem pedidos)
+DELETE FROM CLIENTE WHERE nr_cliente = @novo_cliente;
+
+SELECT COUNT(*) AS encontrado_apos_delete FROM CLIENTE WHERE nr_cliente = @novo_cliente;  -- 0
+
+ROLLBACK;
+
+-- Restricoes que a interface trata (descomente para ver o erro):
+--
+-- Erro 1451 - cliente com pedidos nao pode ser excluido (FK de PEDIDO):
+--   DELETE FROM CLIENTE WHERE nr_cliente = 12;
+--
+-- Erro 1062 - CPF/CNPJ duplicado (UNIQUE uq_cliente_cpf_cnpj):
+--   INSERT INTO CLIENTE (cpf_cnpj, cep, rua, bairro, numero)
+--   VALUES ('043.321.819-60', '50000-000', 'Rua X', 'Centro', '1');
+--
+-- Erro 3819 - CPF/CNPJ curto demais (CHECK ck_cliente_cpf_cnpj_tam):
+--   INSERT INTO CLIENTE (cpf_cnpj, cep, rua, bairro, numero)
+--   VALUES ('123', '50000-000', 'Rua X', 'Centro', '1');
+
+
+-- =========================================================
+-- 4.2 PRODUTO  (dao/ProdutoDAO.java - aba "Produtos")
+-- =========================================================
+
+-- (a) Comandos usados na aplicacao ---------------------------
+--
+-- LISTAR  - ProdutoDAO.listar()
+--   SELECT cd_produto, nome, descricao, valor_kg_ou_unitario, vendido_unitario, marca
+--   FROM PRODUTO ORDER BY cd_produto;
+--
+-- INSERIR - ProdutoDAO.inserir()
+--   INSERT INTO PRODUTO (nome, descricao, valor_kg_ou_unitario, vendido_unitario, marca)
+--   VALUES (?, ?, ?, ?, ?);
+--
+-- ALTERAR - ProdutoDAO.atualizar()
+--   UPDATE PRODUTO SET nome=?, descricao=?, valor_kg_ou_unitario=?, vendido_unitario=?, marca=?
+--   WHERE cd_produto=?;
+--
+-- EXCLUIR - ProdutoDAO.excluir()
+--   DELETE FROM PRODUTO WHERE cd_produto=?;
+
+-- (b) Exemplo executavel -------------------------------------
+START TRANSACTION;
+
+-- INSERT: produto vendido por quilo (vendido_unitario = FALSE)
+INSERT INTO PRODUTO (nome, descricao, valor_kg_ou_unitario, vendido_unitario, marca)
+VALUES ('Caju', 'Caju selecionado, qualidade para revenda', 7.50, FALSE, 'Sitio Boa Terra');
+
+SET @novo_produto = LAST_INSERT_ID();
+SELECT * FROM PRODUTO WHERE cd_produto = @novo_produto;
+
+-- UPDATE: reajuste de preco de 8% e mudanca para venda por unidade
+UPDATE PRODUTO
+SET valor_kg_ou_unitario = ROUND(valor_kg_ou_unitario * 1.08, 2),
+    vendido_unitario     = TRUE
+WHERE cd_produto = @novo_produto;
+
+SELECT cd_produto, nome, valor_kg_ou_unitario, vendido_unitario
+FROM PRODUTO WHERE cd_produto = @novo_produto;           -- 8.10, 1
+
+-- DELETE: remove o produto (sem estoque, vendas, categorias ou fornecedores)
+DELETE FROM PRODUTO WHERE cd_produto = @novo_produto;
+
+SELECT COUNT(*) AS encontrado_apos_delete FROM PRODUTO WHERE cd_produto = @novo_produto;  -- 0
+
+ROLLBACK;
+
+-- Restricoes que a interface trata (descomente para ver o erro):
+--
+-- Erro 1451 - produto com estoque/vendas nao pode ser excluido
+-- (FKs de ESTOQUE, POSSUI, TEM e FORNECE com ON DELETE RESTRICT):
+--   DELETE FROM PRODUTO WHERE cd_produto = 1;
+--
+-- Erro 3819 - valor precisa ser positivo (CHECK ck_produto_valor_positivo):
+--   UPDATE PRODUTO SET valor_kg_ou_unitario = 0 WHERE cd_produto = 1;
+
+
+-- =========================================================
+-- 4.3 FUNCIONARIO  (dao/FuncionarioDAO.java - aba "Funcionarios")
+-- Tabela com auto-relacionamento: nr_funcionario_supervisor aponta
+-- para outro FUNCIONARIO (FK com ON DELETE SET NULL).
+-- =========================================================
+
+-- (a) Comandos usados na aplicacao ---------------------------
+--
+-- LISTAR  - FuncionarioDAO.listar()  (auto-JOIN para mostrar o nome do supervisor)
+--   SELECT f.nr_funcionario, f.nome, f.cpf, f.telefone, f.cep, f.rua, f.bairro, f.numero,
+--          f.apartamento, f.nr_funcionario_supervisor, s.nome AS nome_supervisor
+--   FROM FUNCIONARIO f
+--   LEFT JOIN FUNCIONARIO s ON s.nr_funcionario = f.nr_funcionario_supervisor
+--   ORDER BY f.nr_funcionario;
+--
+-- INSERIR - FuncionarioDAO.inserir()
+--   INSERT INTO FUNCIONARIO (nome, cpf, telefone, cep, rua, bairro, numero, apartamento,
+--                            nr_funcionario_supervisor)
+--   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+--   (quando "(sem supervisor)" e escolhido, o ultimo ? recebe NULL via setNull)
+--
+-- ALTERAR - FuncionarioDAO.atualizar()
+--   UPDATE FUNCIONARIO SET nome=?, cpf=?, telefone=?, cep=?, rua=?, bairro=?, numero=?,
+--          apartamento=?, nr_funcionario_supervisor=?
+--   WHERE nr_funcionario=?;
+--
+-- EXCLUIR - FuncionarioDAO.excluir()
+--   DELETE FROM FUNCIONARIO WHERE nr_funcionario=?;
+
+-- (b) Exemplo executavel -------------------------------------
+START TRANSACTION;
+
+-- INSERT: novo supervisor (sem supervisor acima dele)
+INSERT INTO FUNCIONARIO (nome, cpf, telefone, cep, rua, bairro, numero, apartamento, nr_funcionario_supervisor)
+VALUES ('Marcos Teixeira', '99988877766', '81977776666', '50070-000', 'Rua da Aurora', 'Boa Vista', '80', NULL, NULL);
+SET @supervisor = LAST_INSERT_ID();
+
+-- INSERT: novo funcionario subordinado ao supervisor acima
+INSERT INTO FUNCIONARIO (nome, cpf, telefone, cep, rua, bairro, numero, apartamento, nr_funcionario_supervisor)
+VALUES ('Paula Ramos', '99988877755', '81966665555', '52060-000', 'Rua do Futuro', 'Aflitos', '15', '101', @supervisor);
+SET @subordinado = LAST_INSERT_ID();
+
+SELECT f.nr_funcionario, f.nome, s.nome AS supervisor
+FROM FUNCIONARIO f
+LEFT JOIN FUNCIONARIO s ON s.nr_funcionario = f.nr_funcionario_supervisor
+WHERE f.nr_funcionario IN (@supervisor, @subordinado);
+
+-- UPDATE: troca de telefone do subordinado
+UPDATE FUNCIONARIO
+SET telefone = '81955554444'
+WHERE nr_funcionario = @subordinado;
+
+-- DELETE do supervisor: pela FK com ON DELETE SET NULL, o subordinado
+-- NAO e apagado, apenas fica sem supervisor
+DELETE FROM FUNCIONARIO WHERE nr_funcionario = @supervisor;
+
+SELECT nr_funcionario, nome, telefone, nr_funcionario_supervisor  -- supervisor agora e NULL
+FROM FUNCIONARIO WHERE nr_funcionario = @subordinado;
+
+-- DELETE do subordinado
+DELETE FROM FUNCIONARIO WHERE nr_funcionario = @subordinado;
+
+ROLLBACK;
+
+-- Restricoes que a interface trata (descomente para ver o erro):
+--
+-- Erro 1062 - CPF duplicado (UNIQUE uq_funcionario_cpf):
+--   UPDATE FUNCIONARIO SET cpf = '87347143455' WHERE nr_funcionario = 2;
+--
+-- Erro 3819 - CPF deve ter 11 caracteres (CHECK ck_funcionario_cpf_tam):
+--   UPDATE FUNCIONARIO SET cpf = '123' WHERE nr_funcionario = 2;
+--
+-- Erro 1452 - supervisor inexistente (FK do auto-relacionamento):
+--   UPDATE FUNCIONARIO SET nr_funcionario_supervisor = 9999 WHERE nr_funcionario = 2;
