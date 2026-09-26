@@ -1,1 +1,6 @@
 https://github.com/Marcelomenezes07/Profrutas-BD
+
+
+RECOMENDO RODAR O PROJETO COM O COMANDO VIA TERMINAL:
+
+./app/run.sh
