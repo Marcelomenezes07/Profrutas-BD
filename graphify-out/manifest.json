@@ -1,0 +1,230 @@
+{
+  "app/run.sh": {
+    "mtime": 1790372839.3506167,
+    "seen": 1792590488.843658,
+    "ast_hash": "bfd4cbbb5dc16888caf4e4649a2e805e",
+    "semantic_hash": "bfd4cbbb5dc16888caf4e4649a2e805e"
+  },
+  "app/src/dao/ClienteDAO.java": {
+    "mtime": 1790372452.5723088,
+    "seen": 1792590488.843661,
+    "ast_hash": "5eec58ab669d59c0104f701cb0e5c521",
+    "semantic_hash": "5eec58ab669d59c0104f701cb0e5c521"
+  },
+  "app/src/dao/ConsultaDAO.java": {
+    "mtime": 1790372527.3766735,
+    "seen": 1792590488.843662,
+    "ast_hash": "340861460bac3b6f2a9cf1afb16c219a",
+    "semantic_hash": "340861460bac3b6f2a9cf1afb16c219a"
+  },
+  "app/src/dao/Consultas.java": {
+    "mtime": 1790372506.2037318,
+    "seen": 1792590488.8436632,
+    "ast_hash": "de6c84577d61e0f82d728628e78974bb",
+    "semantic_hash": "de6c84577d61e0f82d728628e78974bb"
+  },
+  "app/src/dao/CorrelacaoDAO.java": {
+    "mtime": 1790431925.3681376,
+    "seen": 1792590488.843664,
+    "ast_hash": "2b78d906eb6d9d89378e1eec484c5755",
+    "semantic_hash": "2b78d906eb6d9d89378e1eec484c5755"
+  },
+  "app/src/dao/DashboardDAO.java": {
+    "mtime": 1790372527.3938723,
+    "seen": 1792590488.843664,
+    "ast_hash": "9516e2f16eacec363bca3a7cc5a6d1cd",
+    "semantic_hash": "9516e2f16eacec363bca3a7cc5a6d1cd"
+  },
+  "app/src/dao/FuncionarioDAO.java": {
+    "mtime": 1790372452.5912595,
+    "seen": 1792590488.843665,
+    "ast_hash": "01734cfd20f0a18f7c8f760babf1719f",
+    "semantic_hash": "01734cfd20f0a18f7c8f760babf1719f"
+  },
+  "app/src/dao/ProdutoDAO.java": {
+    "mtime": 1790372452.5841546,
+    "seen": 1792590488.843665,
+    "ast_hash": "5aa0911f8df733711c9e00d49b8720e9",
+    "semantic_hash": "5aa0911f8df733711c9e00d49b8720e9"
+  },
+  "app/src/main/Exec.java": {
+    "mtime": 1790372754.8771582,
+    "seen": 1792590488.8436658,
+    "ast_hash": "5304797cb015b5e42b7f60a4bd50bc2f",
+    "semantic_hash": "5304797cb015b5e42b7f60a4bd50bc2f"
+  },
+  "app/src/model/Cliente.java": {
+    "mtime": 1790372421.2592592,
+    "seen": 1792590488.8436658,
+    "ast_hash": "cacaa5b0bab8304d98d9763fbf643255",
+    "semantic_hash": "cacaa5b0bab8304d98d9763fbf643255"
+  },
+  "app/src/model/Consulta.java": {
+    "mtime": 1790372421.2820702,
+    "seen": 1792590488.843667,
+    "ast_hash": "7c9f299ef4f2796dcd30670637c08e76",
+    "semantic_hash": "7c9f299ef4f2796dcd30670637c08e76"
+  },
+  "app/src/model/Funcionario.java": {
+    "mtime": 1790372421.274588,
+    "seen": 1792590488.843667,
+    "ast_hash": "023eaa796480f3c771ec9fd6fe665562",
+    "semantic_hash": "023eaa796480f3c771ec9fd6fe665562"
+  },
+  "app/src/model/Produto.java": {
+    "mtime": 1790372421.2669044,
+    "seen": 1792590488.843668,
+    "ast_hash": "2348bd17743d936e34097dbc5a4dffe5",
+    "semantic_hash": "2348bd17743d936e34097dbc5a4dffe5"
+  },
+  "app/src/model/ResultadoConsulta.java": {
+    "mtime": 1790372421.288678,
+    "seen": 1792590488.843668,
+    "ast_hash": "7c54348981528ab48531b7a3c8a93d74",
+    "semantic_hash": "7c54348981528ab48531b7a3c8a93d74"
+  },
+  "app/src/util/ConnectionFactory.java": {
+    "mtime": 1790374208.228582,
+    "seen": 1792590488.843669,
+    "ast_hash": "25b551be8f6e507538a92efc65ad7611",
+    "semantic_hash": "25b551be8f6e507538a92efc65ad7611"
+  },
+  "app/src/util/Estatistica.java": {
+    "mtime": 1790431925.3521078,
+    "seen": 1792590488.843669,
+    "ast_hash": "1d8074b22f61fee0eee6e79b05df5ce7",
+    "semantic_hash": "1d8074b22f61fee0eee6e79b05df5ce7"
+  },
+  "app/src/view/ClientePanel.java": {
+    "mtime": 1790372676.4894233,
+    "seen": 1792590488.8436701,
+    "ast_hash": "6301a122e26aceadab06f8ef1d273b27",
+    "semantic_hash": "6301a122e26aceadab06f8ef1d273b27"
+  },
+  "app/src/view/ConexaoDialog.java": {
+    "mtime": 1790372754.865821,
+    "seen": 1792590488.8436701,
+    "ast_hash": "71e684ebb14574c194b8baa2bd1fb929",
+    "semantic_hash": "71e684ebb14574c194b8baa2bd1fb929"
+  },
+  "app/src/view/ConsultasPanel.java": {
+    "mtime": 1790372754.8466806,
+    "seen": 1792590488.843671,
+    "ast_hash": "095bc9fbb9483c4a18aea18a409f42f0",
+    "semantic_hash": "095bc9fbb9483c4a18aea18a409f42f0"
+  },
+  "app/src/view/CorrelacaoPanel.java": {
+    "mtime": 1790431973.6417701,
+    "seen": 1792590488.843671,
+    "ast_hash": "af4e73d3427118f47a4486305bd1ef1e",
+    "semantic_hash": "af4e73d3427118f47a4486305bd1ef1e"
+  },
+  "app/src/view/CrudPanel.java": {
+    "mtime": 1790372685.5150843,
+    "seen": 1792590488.843672,
+    "ast_hash": "6d07292e98a6b82ca386c22e92082e9d",
+    "semantic_hash": "6d07292e98a6b82ca386c22e92082e9d"
+  },
+  "app/src/view/DashboardPanel.java": {
+    "mtime": 1790372606.429747,
+    "seen": 1792590488.843672,
+    "ast_hash": "d2d4d2674ea9022f486e5956352c7595",
+    "semantic_hash": "d2d4d2674ea9022f486e5956352c7595"
+  },
+  "app/src/view/FuncionarioPanel.java": {
+    "mtime": 1790372676.5054915,
+    "seen": 1792590488.843673,
+    "ast_hash": "844542bd40866ad6a624e58dd6e84707",
+    "semantic_hash": "844542bd40866ad6a624e58dd6e84707"
+  },
+  "app/src/view/GraficosEstatisticaPanel.java": {
+    "mtime": 1790374208.2288475,
+    "seen": 1792590488.843673,
+    "ast_hash": "db3f9de759b751fc3982ef52e1ee7273",
+    "semantic_hash": "db3f9de759b751fc3982ef52e1ee7273"
+  },
+  "app/src/view/MainFrame.java": {
+    "mtime": 1790431980.4613433,
+    "seen": 1792590488.8436742,
+    "ast_hash": "8a8094ac993b7ab7345419221035d0f8",
+    "semantic_hash": "8a8094ac993b7ab7345419221035d0f8"
+  },
+  "app/src/view/ProdutoPanel.java": {
+    "mtime": 1790372676.4943595,
+    "seen": 1792590488.8436742,
+    "ast_hash": "09b29304a6f3ae8499174f683a49ab59",
+    "semantic_hash": "09b29304a6f3ae8499174f683a49ab59"
+  },
+  "app/src/view/UI.java": {
+    "mtime": 1790372692.1846442,
+    "seen": 1792590488.843675,
+    "ast_hash": "a29cf2188d069c0e55ddf2dbfa1decb3",
+    "semantic_hash": "a29cf2188d069c0e55ddf2dbfa1decb3"
+  },
+  "app/src/view/chart/Grafico.java": {
+    "mtime": 1790372585.5435495,
+    "seen": 1792590488.843675,
+    "ast_hash": "744fa0013d4703995f50a47c7a6d6ef5",
+    "semantic_hash": "744fa0013d4703995f50a47c7a6d6ef5"
+  },
+  "app/src/view/chart/GraficoBarras.java": {
+    "mtime": 1790372585.5542262,
+    "seen": 1792590488.8436759,
+    "ast_hash": "87182bf18412aae68af8e2a95a23ca28",
+    "semantic_hash": "87182bf18412aae68af8e2a95a23ca28"
+  },
+  "app/src/view/chart/GraficoColunas.java": {
+    "mtime": 1790372585.5688813,
+    "seen": 1792590488.8436759,
+    "ast_hash": "b9ad80c8b7bac10f3b74a9bb8d5e9859",
+    "semantic_hash": "b9ad80c8b7bac10f3b74a9bb8d5e9859"
+  },
+  "app/src/view/chart/GraficoDispersao.java": {
+    "mtime": 1790431973.6249883,
+    "seen": 1792590488.843677,
+    "ast_hash": "0959de7bff811a1d80a3c1e22781cf82",
+    "semantic_hash": "0959de7bff811a1d80a3c1e22781cf82"
+  },
+  "app/src/view/chart/GraficoRosca.java": {
+    "mtime": 1790372585.5618951,
+    "seen": 1792590488.843677,
+    "ast_hash": "6802190c60e141102770cc8ab56c3841",
+    "semantic_hash": "6802190c60e141102770cc8ab56c3841"
+  },
+  "consultas.sql": {
+    "mtime": 1790433405.787655,
+    "seen": 1792590488.843678,
+    "ast_hash": "fcf5142993c7a641679e5d11eea2f892",
+    "semantic_hash": "fcf5142993c7a641679e5d11eea2f892"
+  },
+  "inser_to.sql": {
+    "mtime": 1790371610.992758,
+    "seen": 1792590488.843678,
+    "ast_hash": "69825ab71fae2eaa393c11be462b2eda",
+    "semantic_hash": "69825ab71fae2eaa393c11be462b2eda"
+  },
+  "modelo_fisico.sql": {
+    "mtime": 1790371610.993013,
+    "seen": 1792590488.843679,
+    "ast_hash": "f760b33fdbaa4719541ba2a094f13961",
+    "semantic_hash": "f760b33fdbaa4719541ba2a094f13961"
+  },
+  "GITHUB.txt": {
+    "mtime": 1790433932.813209,
+    "seen": 1792590488.843679,
+    "ast_hash": "68e4726f525d32705d4699688c1ac2c3",
+    "semantic_hash": "68e4726f525d32705d4699688c1ac2c3"
+  },
+  "README.md": {
+    "mtime": 1790432071.8285282,
+    "seen": 1792590488.84368,
+    "ast_hash": "fa750538a970ea421ae6220e8f6f50a4",
+    "semantic_hash": "fa750538a970ea421ae6220e8f6f50a4"
+  },
+  "app/README.md": {
+    "mtime": 1790432071.847012,
+    "seen": 1792590488.84368,
+    "ast_hash": "cee73818b45cad0659bf2bf18e8c55f7",
+    "semantic_hash": "cee73818b45cad0659bf2bf18e8c55f7"
+  }
+}
