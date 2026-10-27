@@ -9,6 +9,7 @@
 --   PARTE 3 - Grafico de dispersao + correlacao de Pearson
 --   PARTE 4 - Insercao / alteracao / exclusao (CLIENTE, PRODUTO,
 --             FUNCIONARIO)
+--   PARTE 5 - Entrega 4: indices, visoes e novas consultas (9 a 12)
 --
 -- Obs.: na aplicacao, os valores variaveis sao "?" preenchidos via
 -- PreparedStatement. Neste arquivo eles aparecem como valores de
@@ -590,3 +591,366 @@ ROLLBACK;
 --
 -- Erro 1452 - supervisor inexistente (FK do auto-relacionamento):
 --   UPDATE FUNCIONARIO SET nr_funcionario_supervisor = 9999 WHERE nr_funcionario = 2;
+
+
+-- #########################################################
+-- PARTE 5 - ENTREGA 4: INDICES, NOVAS CONSULTAS E VISOES
+--
+--   5.1 Indices  (2)  - idx_pedido_pagamento_data, idx_estoque_validade
+--   5.2 Visoes   (2)  - vw_vendas_detalhadas, vw_situacao_lotes
+--   5.3 Consultas (4) - anti join, full outer join, 2 com subconsultas
+--
+-- ATENCAO: os CREATE INDEX desta parte devem ser executados UMA vez.
+-- Para reexecutar a parte inteira, rode antes os comandos de remocao
+-- que estao no final (secao 5.4).
+-- #########################################################
+
+
+-- =========================================================
+-- 5.1 INDICES
+--
+-- O MySQL (InnoDB) ja cria automaticamente um indice para cada chave
+-- primaria e para cada chave estrangeira (ex.: PEDIDO.nr_cliente,
+-- PERDA(cd_produto, nr_lote)). Por isso os indices abaixo ficam em
+-- colunas que NAO sao chave, mas que as consultas filtram com
+-- frequencia - sem eles, essas buscas leem a tabela inteira.
+-- =========================================================
+
+-- INDICE 1 - PEDIDO (forma_pagamento, dt_venda)
+-- Necessidade: relatorios de venda filtram por forma de pagamento e
+-- por periodo (ex.: "vendas no Pix em agosto"). A coluna de igualdade
+-- (forma_pagamento) vem primeiro e a de intervalo (dt_venda) depois,
+-- que e a ordem que permite ao MySQL usar as duas partes do indice.
+-- Usado por: Consulta 6 (filtro LIKE pela forma de pagamento) e
+--            Consulta 12 (subconsulta correlacionada por forma de
+--            pagamento + mes - secao 5.3).
+CREATE INDEX idx_pedido_pagamento_data ON PEDIDO (forma_pagamento, dt_venda);
+
+-- INDICE 2 - ESTOQUE (dt_validade)
+-- Necessidade: o controle de validade e diario no hortifruti
+-- (produtos pereciveis). Buscar "lotes que vencem nos proximos N dias"
+-- e um filtro de intervalo sobre dt_validade, que nao e chave.
+-- Usado por: Consulta 5 (lotes vencidos/a vencer) e pela visao
+--            vw_situacao_lotes quando filtrada por validade.
+CREATE INDEX idx_estoque_validade ON ESTOQUE (dt_validade);
+
+-- Conferencia dos indices criados
+SHOW INDEX FROM PEDIDO  WHERE Key_name = 'idx_pedido_pagamento_data';
+SHOW INDEX FROM ESTOQUE WHERE Key_name = 'idx_estoque_validade';
+
+-- Prova de uso: o EXPLAIN mostra o indice na coluna "key".
+-- (Com poucas linhas o otimizador as vezes prefere ler a tabela toda,
+--  pois e mais barato; com o volume real de uma loja o indice e usado.)
+EXPLAIN
+SELECT nr_venda_mes, dt_venda, vl_total
+FROM PEDIDO
+WHERE forma_pagamento = 'Pix'
+  AND dt_venda BETWEEN '2026-08-01' AND '2026-08-31';
+
+EXPLAIN
+SELECT cd_produto, nr_lote, dt_validade
+FROM ESTOQUE
+WHERE dt_validade BETWEEN '2026-09-01' AND '2026-10-31';
+
+
+-- =========================================================
+-- 5.2 VISOES
+-- =========================================================
+
+-- ---------------------------------------------------------
+-- VISAO 1 - vw_vendas_detalhadas  (4 joins)
+--   PEDIDO -> CLIENTE -> POSSUI -> PRODUTO, + LEFT JOIN DEVOLUCAO
+--
+-- Justificativa semantica: no varejo, a unidade de analise das vendas
+-- e o ITEM vendido (qual produto, quanto, para quem, por quanto e
+-- como foi pago). No banco essa informacao esta espalhada em 5
+-- tabelas, e qualquer relatorio de vendas (por produto, por cliente,
+-- por bairro, por mes, por forma de pagamento) precisaria repetir os
+-- mesmos joins. A visao entrega uma linha por item vendido, ja com o
+-- subtotal calculado, o tipo de cliente (PF/PJ) e a situacao da
+-- devolucao do pedido - pronta para o gerente consultar.
+-- ---------------------------------------------------------
+CREATE OR REPLACE VIEW vw_vendas_detalhadas AS
+SELECT pe.nr_venda_mes,
+       pe.dt_venda,
+       DATE_FORMAT(pe.dt_venda, '%Y-%m')                      AS mes,
+       pe.forma_pagamento,
+       cl.nr_cliente,
+       cl.cpf_cnpj,
+       CASE WHEN CHAR_LENGTH(cl.cpf_cnpj) > 14
+            THEN 'Pessoa Juridica' ELSE 'Pessoa Fisica' END   AS tipo_cliente,
+       cl.bairro,
+       p.cd_produto,
+       p.nome                                                 AS produto,
+       CASE WHEN p.vendido_unitario THEN 'Unidade' ELSE 'Kg' END AS vendido_por,
+       ps.quantidade,
+       p.valor_kg_ou_unitario                                 AS preco_unitario,
+       ROUND(ps.quantidade * p.valor_kg_ou_unitario, 2)       AS subtotal,
+       CASE WHEN d.n_devolucao IS NULL THEN 'Sem devolucao'
+            WHEN d.devolucao_efetivada  THEN 'Devolvido'
+            ELSE 'Devolucao pendente' END                     AS situacao_devolucao
+FROM PEDIDO pe
+JOIN CLIENTE cl        ON cl.nr_cliente   = pe.nr_cliente
+JOIN POSSUI  ps        ON ps.nr_venda_mes = pe.nr_venda_mes
+JOIN PRODUTO p         ON p.cd_produto    = ps.cd_produto
+LEFT JOIN DEVOLUCAO d  ON d.nr_venda_mes  = pe.nr_venda_mes;
+
+-- Exemplos de uso da visao 1
+-- a) Vendas por bairro e tipo de cliente
+SELECT bairro, tipo_cliente,
+       COUNT(DISTINCT nr_venda_mes) AS pedidos,
+       SUM(subtotal)                AS faturamento
+FROM vw_vendas_detalhadas
+GROUP BY bairro, tipo_cliente
+ORDER BY faturamento DESC;
+
+-- b) Itens vendidos no Pix em agosto (o filtro chega ao indice 1)
+SELECT nr_venda_mes, dt_venda, produto, quantidade, subtotal
+FROM vw_vendas_detalhadas
+WHERE forma_pagamento = 'Pix'
+  AND dt_venda BETWEEN '2026-08-01' AND '2026-08-31'
+ORDER BY dt_venda;
+
+
+-- ---------------------------------------------------------
+-- VISAO 2 - vw_situacao_lotes  (4 joins)
+--   ESTOQUE -> PRODUTO, + LEFT JOIN perdas do lote,
+--   + LEFT JOIN FORNECE -> LEFT JOIN FORNECEDOR
+--
+-- Justificativa semantica: em um hortifruti os produtos sao
+-- pereciveis e o estoque e controlado por LOTE. Para decidir o que
+-- vender primeiro, o que colocar em promocao e qual fornecedor
+-- acionar quando um lote vence ou estraga, o responsavel pelo estoque
+-- precisa ver, numa unica linha por lote: o produto, a validade, a
+-- situacao (vencido / critico / atencao / ok), o valor parado em
+-- estoque, quanto ja se perdeu daquele lote, os descartes pendentes e
+-- os fornecedores do produto (rastreabilidade). Hoje isso exige
+-- juntar 5 tabelas.
+-- ---------------------------------------------------------
+CREATE OR REPLACE VIEW vw_situacao_lotes AS
+SELECT p.cd_produto,
+       p.nome                                                     AS produto,
+       e.nr_lote,
+       e.dt_entrada,
+       e.dt_validade,
+       DATEDIFF(e.dt_validade, CURDATE())                         AS dias_para_vencer,
+       CASE WHEN e.dt_validade <  CURDATE()                         THEN 'VENCIDO'
+            WHEN e.dt_validade <= CURDATE() + INTERVAL 7 DAY        THEN 'CRITICO'
+            WHEN e.dt_validade <= CURDATE() + INTERVAL 30 DAY       THEN 'ATENCAO'
+            ELSE 'OK' END                                         AS situacao,
+       e.quantidade                                               AS qtd_estoque,
+       ROUND(e.quantidade * p.valor_kg_ou_unitario, 2)            AS valor_estoque,
+       COALESCE(pr.qtd_perdida, 0)                                AS qtd_perdida,
+       COALESCE(pr.descartes_pendentes, 0)                        AS descartes_pendentes,
+       ROUND(100 * COALESCE(pr.qtd_perdida, 0)
+             / (e.quantidade + COALESCE(pr.qtd_perdida, 0)), 2)   AS perc_perda,
+       COUNT(DISTINCT fo.cd_fornecedor)                           AS qtd_fornecedores,
+       COALESCE(GROUP_CONCAT(DISTINCT f.nome ORDER BY f.nome SEPARATOR ', '),
+                '(sem fornecedor)')                               AS fornecedores
+FROM ESTOQUE e
+JOIN PRODUTO p ON p.cd_produto = e.cd_produto
+LEFT JOIN (SELECT cd_produto, nr_lote,
+                  SUM(qt_perdida)                                       AS qtd_perdida,
+                  SUM(CASE WHEN descarte_efetivado THEN 0 ELSE 1 END)   AS descartes_pendentes
+           FROM PERDA
+           GROUP BY cd_produto, nr_lote) pr
+       ON pr.cd_produto = e.cd_produto
+      AND pr.nr_lote    = e.nr_lote
+LEFT JOIN FORNECE fo    ON fo.cd_produto    = p.cd_produto
+LEFT JOIN FORNECEDOR f  ON f.cd_fornecedor  = fo.cd_fornecedor
+GROUP BY p.cd_produto, p.nome, p.valor_kg_ou_unitario, e.nr_lote, e.dt_entrada,
+         e.dt_validade, e.quantidade, pr.qtd_perdida, pr.descartes_pendentes;
+
+-- Exemplos de uso da visao 2
+-- a) Resumo do estoque por situacao de validade
+SELECT situacao,
+       COUNT(*)            AS lotes,
+       SUM(valor_estoque)  AS valor_em_estoque,
+       SUM(qtd_perdida)    AS qtd_ja_perdida
+FROM vw_situacao_lotes
+GROUP BY situacao
+ORDER BY FIELD(situacao, 'VENCIDO', 'CRITICO', 'ATENCAO', 'OK');
+
+-- b) Lotes que exigem acao (vencidos ou vencendo em ate 30 dias),
+--    com o valor parado e os fornecedores a acionar.
+--    O filtro por dt_validade e atendido pelo INDICE 2.
+SELECT produto, nr_lote, dt_validade, dias_para_vencer, situacao,
+       qtd_estoque, valor_estoque, descartes_pendentes, fornecedores
+FROM vw_situacao_lotes
+WHERE dt_validade <= CURDATE() + INTERVAL 30 DAY
+ORDER BY dt_validade;
+
+
+-- =========================================================
+-- 5.3 NOVAS CONSULTAS
+-- =========================================================
+
+-- ---------------------------------------------------------
+-- CONSULTA 9 - ANTI JOIN (LEFT JOIN ... WHERE ... IS NULL)
+-- Clientes cadastrados que nunca fizeram nenhum pedido.
+--
+-- Anti join: devolve as linhas da tabela da ESQUERDA que NAO tem par
+-- na tabela da direita. O LEFT JOIN mantem todos os clientes; os que
+-- nao tem pedido ficam com as colunas de PEDIDO nulas, e o
+-- WHERE pe.nr_venda_mes IS NULL fica so com eles.
+-- Uso no negocio: lista para campanha de primeira compra.
+-- ---------------------------------------------------------
+SELECT cl.nr_cliente,
+       cl.cpf_cnpj,
+       CASE WHEN CHAR_LENGTH(cl.cpf_cnpj) > 14
+            THEN 'Pessoa Juridica' ELSE 'Pessoa Fisica' END AS tipo_cliente,
+       COALESCE(cl.telefone, cl.telefone2, '(sem telefone)') AS contato,
+       cl.bairro
+FROM CLIENTE cl
+LEFT JOIN PEDIDO pe ON pe.nr_cliente = cl.nr_cliente
+WHERE pe.nr_venda_mes IS NULL
+ORDER BY cl.bairro, cl.nr_cliente;
+
+
+-- ---------------------------------------------------------
+-- CONSULTA 10 - FULL OUTER JOIN
+-- Comparativo por produto: o que foi VENDIDO x o que foi PERDIDO.
+--
+-- Um produto pode ter vendas e perdas, so vendas ou so perdas. Para
+-- ver os tres casos juntos e preciso um FULL OUTER JOIN entre o total
+-- vendido por produto e o total perdido por produto.
+-- O MySQL nao possui FULL OUTER JOIN; a forma padrao de obter o mesmo
+-- resultado e:
+--     A LEFT JOIN B                       (todos de A, com ou sem B)
+--     UNION ALL
+--     A RIGHT JOIN B WHERE A.chave IS NULL (os de B que nao estao em A)
+-- Em SGBDs que suportam a sintaxe (PostgreSQL, SQL Server, Oracle),
+-- seria simplesmente: FROM vendas v FULL OUTER JOIN perdas pr
+--                     ON pr.cd_produto = v.cd_produto
+-- Uso no negocio: produtos que perdem mais do que vendem indicam
+-- compra excessiva ou armazenamento inadequado.
+-- ---------------------------------------------------------
+WITH vendas AS (
+    SELECT ps.cd_produto,
+           SUM(ps.quantidade)                         AS qtd_vendida,
+           SUM(ps.quantidade * p.valor_kg_ou_unitario) AS valor_vendido
+    FROM POSSUI ps
+    JOIN PRODUTO p ON p.cd_produto = ps.cd_produto
+    GROUP BY ps.cd_produto
+),
+perdas AS (
+    SELECT pr.cd_produto,
+           SUM(pr.qt_perdida)                          AS qtd_perdida,
+           SUM(pr.qt_perdida * p.valor_kg_ou_unitario) AS valor_perdido
+    FROM PERDA pr
+    JOIN PRODUTO p ON p.cd_produto = pr.cd_produto
+    GROUP BY pr.cd_produto
+),
+comparativo AS (
+    -- parte 1: todos os produtos vendidos, com ou sem perda
+    SELECT v.cd_produto,
+           v.qtd_vendida, v.valor_vendido,
+           pr.qtd_perdida, pr.valor_perdido
+    FROM vendas v
+    LEFT JOIN perdas pr ON pr.cd_produto = v.cd_produto
+    UNION ALL
+    -- parte 2: produtos com perda que nunca foram vendidos
+    SELECT pr.cd_produto,
+           v.qtd_vendida, v.valor_vendido,
+           pr.qtd_perdida, pr.valor_perdido
+    FROM vendas v
+    RIGHT JOIN perdas pr ON pr.cd_produto = v.cd_produto
+    WHERE v.cd_produto IS NULL
+)
+SELECT c.cd_produto,
+       p.nome                                         AS produto,
+       COALESCE(c.qtd_vendida, 0)                     AS qtd_vendida,
+       COALESCE(ROUND(c.valor_vendido, 2), 0)         AS valor_vendido,
+       COALESCE(c.qtd_perdida, 0)                     AS qtd_perdida,
+       COALESCE(ROUND(c.valor_perdido, 2), 0)         AS valor_perdido,
+       CASE WHEN c.qtd_vendida IS NULL THEN 'So perda (nunca vendido)'
+            WHEN c.qtd_perdida IS NULL THEN 'So venda (sem perda)'
+            WHEN c.qtd_perdida > c.qtd_vendida THEN 'Perde mais do que vende'
+            ELSE 'Venda e perda' END                  AS situacao
+FROM comparativo c
+JOIN PRODUTO p ON p.cd_produto = c.cd_produto
+ORDER BY situacao, valor_perdido DESC;
+
+
+-- ---------------------------------------------------------
+-- CONSULTA 11 - SUBCONSULTAS (tabela derivada + subconsulta escalar)
+-- Clientes cujo total gasto e maior que a media de gasto por cliente.
+--
+-- Subconsulta 1 (no FROM / tabela derivada): calcula o gasto de cada
+--   cliente.
+-- Subconsulta 2 (escalar, no WHERE): calcula a MEDIA desses gastos -
+--   ela mesma usa outra subconsulta derivada (media de uma soma).
+-- Uso no negocio: identificar os melhores clientes para fidelizacao.
+-- ---------------------------------------------------------
+SELECT g.nr_cliente,
+       cl.cpf_cnpj,
+       cl.bairro,
+       g.qtd_pedidos,
+       g.total_gasto,
+       ROUND((SELECT AVG(t.total)
+                FROM (SELECT SUM(vl_total) AS total
+                        FROM PEDIDO
+                       GROUP BY nr_cliente) t), 2)       AS media_geral,
+       ROUND(g.total_gasto
+             - (SELECT AVG(t.total)
+                  FROM (SELECT SUM(vl_total) AS total
+                          FROM PEDIDO
+                         GROUP BY nr_cliente) t), 2)     AS acima_da_media
+FROM (SELECT nr_cliente,
+             COUNT(*)      AS qtd_pedidos,
+             SUM(vl_total) AS total_gasto
+        FROM PEDIDO
+       GROUP BY nr_cliente) g
+JOIN CLIENTE cl ON cl.nr_cliente = g.nr_cliente
+WHERE g.total_gasto > (SELECT AVG(t.total)
+                         FROM (SELECT SUM(vl_total) AS total
+                                 FROM PEDIDO
+                                GROUP BY nr_cliente) t)
+ORDER BY g.total_gasto DESC;
+
+
+-- ---------------------------------------------------------
+-- CONSULTA 12 - SUBCONSULTAS (correlacionada + IN)
+-- Pedidos com valor acima da media da MESMA forma de pagamento no
+-- MESMO mes, que contenham ao menos um produto com perda registrada.
+--
+-- Subconsulta 1 (correlacionada, no WHERE): para cada pedido "pe",
+--   recalcula a media dos pedidos com a mesma forma de pagamento e no
+--   mesmo mes. Ela filtra por forma_pagamento (igualdade) + intervalo
+--   de dt_venda, exatamente o formato atendido pelo
+--   INDICE 1 idx_pedido_pagamento_data.
+-- Subconsulta 2 (IN aninhado): pedidos que tem algum item cujo
+--   produto aparece na tabela PERDA.
+-- Uso no negocio: vendas acima do padrao envolvendo produtos sensiveis
+-- a perda - candidatas a conferencia de qualidade.
+-- ---------------------------------------------------------
+SELECT pe.nr_venda_mes,
+       pe.dt_venda,
+       pe.forma_pagamento,
+       pe.vl_total,
+       ROUND((SELECT AVG(p2.vl_total)
+                FROM PEDIDO p2
+               WHERE p2.forma_pagamento = pe.forma_pagamento
+                 AND p2.dt_venda >= DATE_FORMAT(pe.dt_venda, '%Y-%m-01')
+                 AND p2.dt_venda <  DATE_FORMAT(pe.dt_venda, '%Y-%m-01') + INTERVAL 1 MONTH), 2)
+                                                         AS media_forma_no_mes
+FROM PEDIDO pe
+WHERE pe.vl_total > (SELECT AVG(p2.vl_total)
+                       FROM PEDIDO p2
+                      WHERE p2.forma_pagamento = pe.forma_pagamento
+                        AND p2.dt_venda >= DATE_FORMAT(pe.dt_venda, '%Y-%m-01')
+                        AND p2.dt_venda <  DATE_FORMAT(pe.dt_venda, '%Y-%m-01') + INTERVAL 1 MONTH)
+  AND pe.nr_venda_mes IN (SELECT ps.nr_venda_mes
+                            FROM POSSUI ps
+                           WHERE ps.cd_produto IN (SELECT DISTINCT pr.cd_produto
+                                                     FROM PERDA pr))
+ORDER BY pe.dt_venda;
+
+
+-- =========================================================
+-- 5.4 REMOCAO (somente para reexecutar a Parte 5 do zero)
+-- =========================================================
+-- DROP VIEW IF EXISTS vw_vendas_detalhadas;
+-- DROP VIEW IF EXISTS vw_situacao_lotes;
+-- DROP INDEX idx_pedido_pagamento_data ON PEDIDO;
+-- DROP INDEX idx_estoque_validade      ON ESTOQUE;

@@ -436,3 +436,84 @@ Classificação usada para |r|: < 0,3 desprezível · 0,3–0,5 fraca · 0,5–0
 
 O arquivo `consultas.sql` traz também uma versão do cálculo de Pearson e da reta **feita inteiramente em SQL**,
 que confere com o valor mostrado na aplicação (r = 0,6696 para o primeiro par).
+
+---
+
+## Entrega 4 — Índices, consultas e visões
+
+Todo o SQL desta entrega está na **Parte 5** do arquivo [`consultas.sql`](consultas.sql) (seção *"PARTE 5 - ENTREGA 4"*).
+As 4 consultas novas e as 2 visões também aparecem na aba **Consultas** da aplicação (itens 9 a 14).
+
+> **Como executar:** com o banco já criado (`modelo_fisico.sql` + `inser_to.sql`), execute o `consultas.sql`
+> (ou apenas a Parte 5). Os `CREATE INDEX` devem rodar **uma única vez**; para reexecutar a Parte 5,
+> rode antes os comandos de remoção da seção 5.4 (`DROP VIEW` / `DROP INDEX`).
+
+### 1. Índices
+
+O MySQL (InnoDB) já cria índices automaticamente para as chaves primárias e para todas as chaves
+estrangeiras (ex.: `PEDIDO.nr_cliente`, `PERDA(cd_produto, nr_lote)`). Por isso os índices novos
+ficam em colunas que **não são chave**, mas que as consultas filtram — sem eles, essas buscas
+percorrem a tabela inteira.
+
+| Índice | Tabela (colunas) | Por que é necessário | Onde é usado |
+|---|---|---|---|
+| `idx_pedido_pagamento_data` | `PEDIDO (forma_pagamento, dt_venda)` | Relatórios de venda filtram por forma de pagamento **e** período (ex.: "Pix em agosto"). A coluna de igualdade vem primeiro e a de intervalo depois, ordem que permite usar as duas partes do índice. | Consulta 6 (filtro por forma de pagamento), **Consulta 12** (subconsulta correlacionada por forma + mês) e visão `vw_vendas_detalhadas` filtrada por forma/período |
+| `idx_estoque_validade` | `ESTOQUE (dt_validade)` | Produtos perecíveis: o controle de validade é diário e sempre é um filtro de intervalo sobre `dt_validade`, que não é chave. | Consulta 5 (lotes vencidos/a vencer) e visão **`vw_situacao_lotes`** filtrada por validade |
+
+O uso foi comprovado com `EXPLAIN` (incluído no script):
+
+```
+-> Index range scan on PEDIDO using idx_pedido_pagamento_data
+   over (forma_pagamento = 'Pix' AND '2026-08-01' <= dt_venda <= '2026-08-31')
+-> Covering index range scan on ESTOQUE using idx_estoque_validade
+   over ('2026-09-01' <= dt_validade <= '2026-10-31')
+```
+
+### 2. Consultas
+
+| # | Consulta | Tipo exigido | Como foi feito | Resultado* |
+|---|---|---|---|---|
+| 9 | Clientes que nunca fizeram pedido | **Anti join (esquerda)** | `CLIENTE LEFT JOIN PEDIDO ... WHERE pe.nr_venda_mes IS NULL` | 7 clientes |
+| 10 | Vendido × perdido por produto | **Full outer join** | Totais de venda e de perda por produto unidos por `LEFT JOIN` + `UNION ALL` + `RIGHT JOIN ... WHERE v.cd_produto IS NULL` | 28 produtos (9 só venda, 4 só perda, 15 com ambos) |
+| 11 | Clientes com gasto acima da média | **Subconsultas** | Tabela derivada (gasto por cliente) + subconsulta escalar no `WHERE` com a média desses gastos | 12 clientes (média = R$ 101,35) |
+| 12 | Pedidos acima da média da sua forma de pagamento no mês, com produto que teve perda | **Subconsultas** | Subconsulta **correlacionada** (média por forma de pagamento + mês, usa o índice 1) + `IN` aninhado (pedidos com produto presente em `PERDA`) | 10 pedidos |
+
+\* com os dados do `inser_to.sql`.
+
+**Sobre o FULL OUTER JOIN:** o MySQL não implementa a sintaxe `FULL OUTER JOIN`. O resultado
+equivalente é obtido com a forma padrão `A LEFT JOIN B UNION ALL A RIGHT JOIN B WHERE A.chave IS NULL`:
+a primeira parte traz todos os produtos vendidos (com ou sem perda) e a segunda acrescenta os
+produtos que só tiveram perda. Em PostgreSQL/SQL Server/Oracle seria
+`FROM vendas v FULL OUTER JOIN perdas pr ON pr.cd_produto = v.cd_produto`.
+
+Uso no negócio de cada consulta:
+- **9** — lista de clientes para campanha de primeira compra.
+- **10** — produtos que perdem mais do que vendem (ex.: Pepino, Couve-flor) ou que só geram perda (Melancia, Brócolis, Alface, Cenoura) indicam compra excessiva ou armazenamento inadequado.
+- **11** — melhores clientes, candidatos a programa de fidelidade.
+- **12** — vendas acima do padrão envolvendo produtos sensíveis a perda, candidatas a conferência de qualidade.
+
+### 3. Visões
+
+#### `vw_vendas_detalhadas` — 4 joins
+`PEDIDO ⋈ CLIENTE ⋈ POSSUI ⋈ PRODUTO ⟕ DEVOLUCAO` — uma linha por **item vendido**, com data, mês,
+forma de pagamento, cliente (CPF/CNPJ, tipo PF/PJ, bairro), produto, quantidade, preço, subtotal e
+situação da devolução.
+
+**Justificativa semântica:** no varejo, a unidade de análise das vendas é o item vendido — qual
+produto, quanto, para quem, por quanto e como foi pago. No banco essa informação está espalhada em
+5 tabelas, e todo relatório de vendas (por produto, cliente, bairro, mês ou forma de pagamento)
+repetiria os mesmos joins. A visão entrega essa base pronta para o gerente consultar, com o
+subtotal já calculado.
+
+#### `vw_situacao_lotes` — 4 joins
+`ESTOQUE ⋈ PRODUTO ⟕ (perdas agregadas por lote) ⟕ FORNECE ⟕ FORNECEDOR` — uma linha por **lote**,
+com validade, dias para vencer, situação (VENCIDO / CRÍTICO / ATENÇÃO / OK), quantidade e valor em
+estoque, quantidade perdida, % de perda, descartes pendentes e fornecedores do produto.
+
+**Justificativa semântica:** em um hortifrúti os produtos são perecíveis e o estoque é controlado
+por lote. Para decidir o que vender primeiro, o que colocar em promoção e qual fornecedor acionar
+quando um lote vence ou estraga, o responsável pelo estoque precisa ver tudo isso numa única linha
+por lote — o que hoje exige juntar 5 tabelas. A lista de fornecedores dá a **rastreabilidade** do lote.
+
+O script traz dois exemplos de uso para cada visão (ex.: faturamento por bairro e tipo de cliente;
+resumo do estoque por situação de validade; lotes que exigem ação com os fornecedores a acionar).

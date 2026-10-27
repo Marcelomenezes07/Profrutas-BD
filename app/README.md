@@ -27,7 +27,7 @@ Requer JDK 17 ou superior. O driver `mysql-connector-j-8.2.0.jar` já está em `
 | **Clientes** | Inserção, alteração, exclusão e busca na tabela `CLIENTE` |
 | **Produtos** | Inserção, alteração, exclusão e busca na tabela `PRODUTO` |
 | **Funcionarios** | Inserção, alteração, exclusão e busca na tabela `FUNCIONARIO`, com escolha do supervisor (auto-relacionamento) |
-| **Consultas** | 8 consultas pré-definidas: mostra o SQL, aceita parâmetro quando houver, exibe o resultado em tabela e exporta CSV |
+| **Consultas** | 14 consultas pré-definidas (incluindo as 2 visões da Entrega 4): mostra o SQL, aceita parâmetro quando houver, exibe o resultado em tabela e exporta CSV |
 | **Correlacao** | Gráfico de dispersão (scatter plot) com reta de regressão linear, coeficiente de Pearson (r) e R², para 5 pares de variáveis |
 | **Graficos Estatistica** | Galeria com os gráficos feitos para a disciplina de Estatística (imagens da pasta `graficos/`) |
 
@@ -48,6 +48,14 @@ O SQL completo está em [`../consultas.sql`](../consultas.sql) e em `src/dao/Con
 | 6 | Conferência de pedidos | JOIN de 4 tabelas + LEFT JOIN, GROUP_CONCAT, valor registrado × recalculado |
 | 7 | Vendas mensais × forma de pagamento | Pivot com SUM + CASE, `WITH ROLLUP` |
 | 8 | Produtos nunca vendidos | NOT EXISTS (anti-join), subconsultas escalares correlacionadas |
+| 9 | Clientes que nunca compraram | **Anti join** (LEFT JOIN ... IS NULL) — Entrega 4 |
+| 10 | Vendido × perdido por produto | **Full outer join** (LEFT JOIN + UNION ALL + RIGHT JOIN) — Entrega 4 |
+| 11 | Clientes acima da média de gasto | **Subconsultas**: tabela derivada + escalar — Entrega 4 |
+| 12 | Pedidos acima da média da forma de pagamento | **Subconsultas**: correlacionada + IN aninhado — Entrega 4 |
+| 13 | Visão `vw_vendas_detalhadas` | Visão com 4 joins — Entrega 4 |
+| 14 | Visão `vw_situacao_lotes` | Visão com 4 joins — Entrega 4 |
+
+As consultas 13 e 14 leem as visões: execute antes a Parte 5 do `consultas.sql` no banco.
 
 ## Estrutura
 

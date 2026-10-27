@@ -129,6 +129,8 @@ public final class UI {
                 case 1406 -> "Um dos campos excede o tamanho maximo permitido.\n\nDetalhe: " + sql.getMessage();
                 case 1048 -> "Um campo obrigatorio ficou vazio.\n\nDetalhe: " + sql.getMessage();
                 case 1045 -> "Usuario ou senha do MySQL incorretos.";
+                case 1146 -> "Tabela ou visao inexistente no banco. Se for uma das visoes (vw_...), execute antes "
+                           + "a Parte 5 (Entrega 4) do arquivo consultas.sql.\n\nDetalhe: " + sql.getMessage();
                 case 1049 -> "O banco 'hortifruti' nao existe. Execute modelo_fisico.sql e inser_to.sql primeiro.";
                 case 0 -> "Nao foi possivel conectar ao MySQL. Verifique se o servidor esta em execucao.\n\nDetalhe: "
                         + sql.getMessage();
