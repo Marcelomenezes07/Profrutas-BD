@@ -517,3 +517,185 @@ por lote — o que hoje exige juntar 5 tabelas. A lista de fornecedores dá a **
 
 O script traz dois exemplos de uso para cada visão (ex.: faturamento por bairro e tipo de cliente;
 resumo do estoque por situação de validade; lotes que exigem ação com os fornecedores a acionar).
+
+---
+
+## Etapa 05 — Funções, procedimentos e triggers
+
+Todo o SQL desta etapa está na **Parte 6** do arquivo [`consultas.sql`](consultas.sql)
+(seção *"PARTE 6 - ETAPA 05"*), organizada em:
+
+| Seção | Conteúdo |
+|---|---|
+| 6.1 | Tabela de log `LOG_PRECO_PRODUTO` |
+| 6.2 | Funções `fn_situacao_validade` e `fn_estoque_disponivel` |
+| 6.3 | Procedimentos `sp_reajustar_precos_categoria` (atualização) e `sp_baixar_estoque_fefo` (cursor) |
+| 6.4 | Triggers `trg_produto_log_preco` (log) e `trg_perda_baixa_estoque` |
+| 6.5 | Testes de tudo, dentro de uma transação com `ROLLBACK` (não alteram os dados) |
+| 6.6 | Comandos de remoção |
+
+> **Como executar:** com o banco criado, execute a Parte 6 no DBeaver como script (**Alt+X**).
+> Ela usa `DELIMITER $$`, necessário para criar blocos `BEGIN ... END`. Cada objeto é precedido de
+> `DROP ... IF EXISTS`, então a parte pode ser executada mais de uma vez sem erro.
+
+### Visão geral: como as peças se ligam
+
+Os objetos não são soltos: eles trabalham juntos sobre o controle de **preço** e de **estoque**,
+os dois pontos mais sensíveis de um hortifrúti.
+
+```
+sp_reajustar_precos_categoria ──altera preços──► PRODUTO ──dispara──► trg_produto_log_preco ──grava──► LOG_PRECO_PRODUTO
+                                                    ▲
+                     aba Produtos do app / UPDATE direto também disparam o log
+
+sp_baixar_estoque_fefo ──consulta──► fn_estoque_disponivel
+        └──percorre lotes (CURSOR) e baixa──► ESTOQUE ◄──baixa── trg_perda_baixa_estoque ◄──dispara── INSERT em PERDA
+
+fn_situacao_validade ── regra única de validade (VENCIDO / CRÍTICO / ATENÇÃO / OK)
+```
+
+### 1. Funções
+
+#### `fn_situacao_validade(dt_validade)` — com estrutura condicional
+Retorna a situação de um lote pela validade usando **`IF / ELSEIF / ELSE`**:
+
+| Retorno | Condição | O que a loja faz |
+|---|---|---|
+| `VENCIDO` | validade já passou | retira da venda / descarta |
+| `CRITICO` | vence em até 7 dias | vende com prioridade |
+| `ATENCAO` | vence em até 30 dias | planeja promoção |
+| `OK` | mais de 30 dias | venda normal |
+
+**Justificativa:** num hortifrúti quase tudo é perecível, e a classificação do lote pela validade é o
+que decide o que vai para a frente da gôndola, o que entra em promoção e o que deve ser descartado.
+Essa regra estava escrita **duas vezes** no projeto (Consulta 5 e visão `vw_situacao_lotes`). Se a
+loja decidir, por exemplo, que "crítico" passa a ser 5 dias, seria preciso lembrar de alterar todos os
+lugares. A função **centraliza a regra de negócio em um único ponto**.
+
+#### `fn_estoque_disponivel(cd_produto)`
+Retorna quanto de um produto **pode ser vendido**: a soma dos lotes com validade de hoje em diante.
+
+**Justificativa:** em um hortifrúti, estoque físico e estoque vendável não são a mesma coisa. Um lote
+vencido continua na tabela `ESTOQUE` até ser descartado, mas não pode ser vendido. Antes de aceitar
+uma venda, o sistema precisa saber quanto está realmente disponível. A função é usada pelo
+procedimento de baixa FEFO para recusar uma venda maior que o disponível, e pode ser usada em qualquer
+consulta.
+
+> As funções declaram `NO SQL` / `READS SQL DATA` e `NOT DETERMINISTIC` (dependem da data de hoje).
+> O MySQL exige essas declarações quando o log binário está ativo, que é o padrão do MySQL 8.
+
+### 2. Procedimentos
+
+#### `sp_reajustar_precos_categoria(categoria, percentual)` — atualização de dados
+Reajusta em X% o preço de **todos os produtos de uma categoria**. Exemplo:
+`CALL sp_reajustar_precos_categoria(3, 10);` aplica +10% em todos os produtos da categoria 3.
+
+Validações (com `SIGNAL`, que interrompe e devolve uma mensagem clara):
+- o percentual precisa estar entre **−50% e +100%**, o que evita erros de digitação (digitar 100
+  querendo 10) e preço zerado ou negativo;
+- a categoria precisa existir.
+
+**Justificativa:** no hortifrúti os preços acompanham a **sazonalidade** e mudam **por grupo de
+produtos**: na entressafra das frutas tropicais todas sobem juntas; na safra, todas baixam. Alterar
+produto por produto é lento e sujeito a erro. O procedimento faz o reajuste do grupo inteiro em uma
+única operação, com regras de segurança, e cada preço alterado fica registrado automaticamente no log
+pelo Trigger 1.
+
+#### `sp_baixar_estoque_fefo(produto, quantidade)` — com CURSOR
+Dá baixa de uma quantidade vendida seguindo a regra **FEFO** (*First Expired, First Out*): consome
+primeiro o lote que vence primeiro e só passa para o próximo lote quando o anterior acaba.
+
+1. Valida a quantidade (> 0).
+2. Usa `fn_estoque_disponivel`: se não houver estoque vendável suficiente, **recusa e não altera nada**.
+3. O **cursor** percorre os lotes válidos do produto em ordem de validade. Para cada lote:
+   `retirar = MIN(quanto ainda falta, quanto tem no lote)`, atualiza o lote, registra a retirada e
+   desconta do que falta. **Para** assim que o pedido é atendido.
+4. Devolve uma tabela mostrando quanto saiu de cada lote.
+
+Exemplo do teste (3 lotes de Maçã Gala com 10, 20 e 30 kg; baixa de 25 kg):
+
+| Lote | Vence em | Antes | Retirado | Depois |
+|---|---|---|---|---|
+| 2 | 5 dias | 10 | **10** | 0 |
+| 3 | 15 dias | 20 | **15** | 5 |
+| 4 | 40 dias | 30 | — (não é tocado) | 30 |
+
+**Por que precisa de cursor (não dá para fazer com um `UPDATE`):**
+- **A quantidade retirada de cada lote depende do resultado do lote anterior.** O saldo que "falta" é
+  um estado que passa de uma linha para a próxima. Um `UPDATE` avalia a mesma expressão para cada linha
+  de forma independente e não carrega esse saldo entre as linhas.
+- **A ordem importa e o processamento para no meio:** os lotes são consumidos por validade crescente, e
+  o processo termina quando o pedido é atendido. Um `UPDATE` não tem "pare quando atingir o total".
+- **Para cada lote são feitas duas ações** com valores calculados naquele passo: atualizar o lote e
+  registrar a retirada.
+
+**Justificativa:** produtos perecíveis precisam sair na ordem de validade. Se a baixa for feita no
+lote errado (o mais novo), o lote mais antigo vence na prateleira e vira **perda**. A regra FEFO é a
+prática padrão do varejo de alimentos para reduzir desperdício.
+
+> O procedimento não abre nem fecha transação: quem chama decide entre `COMMIT` e `ROLLBACK`. A
+> validação do passo 2 garante que a baixa nunca fica pela metade.
+
+### 3. Triggers
+
+#### `trg_produto_log_preco` — `AFTER UPDATE` em `PRODUTO` (atualiza a tabela de log)
+Sempre que o **preço** de um produto muda, grava uma linha em `LOG_PRECO_PRODUTO` com preço antigo,
+preço novo, variação %, usuário e data/hora. Mudanças que não alteram o preço (nome, descrição, marca)
+**não** geram log.
+
+**Justificativa:** o preço é o dado mais sensível do varejo. A loja precisa responder *"quem mudou o
+preço do tomate, quando e de quanto?"* para conferir reajustes, investigar erros de etiqueta e atender
+reclamações de clientes, já que o preço cobrado deve ser o anunciado. Por ser um trigger, **o registro
+é garantido em qualquer caminho de alteração**: pelo procedimento de reajuste, pela aba *Produtos* da
+aplicação Java ou por um `UPDATE` direto no DBeaver. Ninguém precisa "lembrar" de gravar o log.
+
+Decisões técnicas:
+- **`AFTER`**: o log só deve existir se a alteração realmente aconteceu, ou seja, se passou nas
+  restrições `CHECK` da tabela.
+- **`USER()` e não `CURRENT_USER()`**: dentro de um trigger, `CURRENT_USER()` devolve o dono do
+  trigger, enquanto `USER()` devolve quem está conectado e fez a alteração.
+- **A tabela de log não tem chave estrangeira para `PRODUTO`**: um log de auditoria precisa sobreviver
+  mesmo que o produto seja excluído depois. Por isso ela guarda também uma cópia do nome do produto.
+
+#### `trg_perda_baixa_estoque` — `BEFORE INSERT` em `PERDA`
+Ao registrar uma perda (produto estragado, amassado, vencido...):
+1. **bloqueia** o registro se o lote não existir ou se a quantidade perdida for **maior que a
+   quantidade do lote**;
+2. **desconta** a quantidade perdida do lote no `ESTOQUE`.
+
+**Justificativa:** perda é saída de estoque. Sem o trigger, é possível registrar uma perda e o
+`ESTOQUE` continuar mostrando a mercadoria que já foi para o lixo. O sistema passa a ter
+**"estoque fantasma"**, que gera vendas que não podem ser entregues e compras planejadas errado.
+Também não faz sentido perder mais do que existia no lote. O trigger mantém `PERDA` e `ESTOQUE`
+sempre coerentes, automaticamente.
+
+Decisão técnica: **`BEFORE`** porque a verificação precisa acontecer antes de a perda ser gravada,
+para poder recusá-la. O `SIGNAL` cancela o `INSERT` inteiro, inclusive a baixa no estoque.
+
+### 4. Testes
+
+A seção 6.5 do script testa tudo dentro de `START TRANSACTION ... ROLLBACK`, então nada fica gravado.
+Como todos os lotes dos dados de exemplo já estão vencidos, o teste primeiro cria três lotes novos
+(com validade futura) para a Maçã Gala. Resultados verificados:
+
+| Objeto | Teste | Resultado |
+|---|---|---|
+| `fn_situacao_validade` | datas de ontem, +3, +20 e +60 dias | VENCIDO, CRITICO, ATENCAO, OK |
+| `fn_estoque_disponivel` | Maçã Gala com 1 lote vencido + 3 válidos (10+20+30) | 60 (o vencido não conta) |
+| `sp_baixar_estoque_fefo` | baixa de 25 kg | lote 2: 10→0, lote 3: 20→5, lote 4 intacto; disponível passa a 35 |
+| `sp_reajustar_precos_categoria` | +10% na categoria 3 | 3 produtos reajustados |
+| `trg_produto_log_preco` | reajuste + `UPDATE` direto de preço + `UPDATE` só da descrição | 4 linhas de log; a mudança de descrição não gera log |
+| `trg_perda_baixa_estoque` | perda de 2 kg no lote 3 | estoque do lote: 5→3 |
+
+Casos de erro (comentados no script, com a mensagem esperada):
+
+| Comando | Mensagem |
+|---|---|
+| `CALL sp_reajustar_precos_categoria(3, 150)` | Percentual invalido (150.00%). Use um valor entre -50 e 100. |
+| `CALL sp_reajustar_precos_categoria(999, 10)` | Categoria 999 nao existe. |
+| `CALL sp_baixar_estoque_fefo(2, 1000)` | Estoque insuficiente para o produto 2: disponivel 0.000, solicitado 1000.000. |
+| perda de 9999 no lote 1 do produto 1 | Perda de 9999.000 maior que o estoque do lote (205.360). |
+
+Na aplicação Java, essas mensagens de regra de negócio (`SIGNAL`, código 1644) aparecem exatamente como
+escritas acima. Depois que a Parte 6 é executada no banco, qualquer alteração de preço feita pela aba
+**Produtos** passa a ser registrada no log automaticamente.

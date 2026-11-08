@@ -10,6 +10,7 @@
 --   PARTE 4 - Insercao / alteracao / exclusao (CLIENTE, PRODUTO,
 --             FUNCIONARIO)
 --   PARTE 5 - Entrega 4: indices, visoes e novas consultas (9 a 12)
+--   PARTE 6 - Etapa 05: funcoes, procedimentos e triggers
 --
 -- Obs.: na aplicacao, os valores variaveis sao "?" preenchidos via
 -- PreparedStatement. Neste arquivo eles aparecem como valores de
@@ -954,3 +955,558 @@ ORDER BY pe.dt_venda;
 -- DROP VIEW IF EXISTS vw_situacao_lotes;
 -- DROP INDEX idx_pedido_pagamento_data ON PEDIDO;
 -- DROP INDEX idx_estoque_validade      ON ESTOQUE;
+
+
+-- #########################################################
+-- PARTE 6 - ETAPA 05: FUNCOES, PROCEDIMENTOS E TRIGGERS
+--
+--   6.1 Tabela de log   - LOG_PRECO_PRODUTO
+--   6.2 Funcoes      (2) - fn_situacao_validade, fn_estoque_disponivel
+--   6.3 Procedimentos(2) - sp_reajustar_precos_categoria (atualizacao)
+--                          sp_baixar_estoque_fefo        (CURSOR)
+--   6.4 Triggers     (2) - trg_produto_log_preco   (grava log)
+--                          trg_perda_baixa_estoque (estoque x perda)
+--   6.5 Testes (transacao com ROLLBACK - nao altera os dados)
+--   6.6 Remocao
+--
+-- Como as pecas se ligam:
+--   sp_reajustar_precos_categoria --altera precos--> trg_produto_log_preco
+--                                                     --grava--> LOG_PRECO_PRODUTO
+--   sp_baixar_estoque_fefo --usa--> fn_estoque_disponivel
+--   INSERT em PERDA --dispara--> trg_perda_baixa_estoque --baixa--> ESTOQUE
+--
+-- EXECUCAO: esta parte usa DELIMITER $$ (necessario para criar blocos
+-- BEGIN ... END). No DBeaver execute como script (Alt+X). Cada objeto
+-- e precedido de DROP ... IF EXISTS, entao a parte pode ser
+-- reexecutada sem erro.
+-- #########################################################
+
+
+-- =========================================================
+-- 6.1 TABELA DE LOG
+--
+-- LOG_PRECO_PRODUTO guarda o historico de alteracoes de preco,
+-- preenchido automaticamente pelo trigger trg_produto_log_preco.
+--
+-- Decisoes de modelagem:
+--  * NAO tem chave estrangeira para PRODUTO: um log de auditoria
+--    precisa sobreviver mesmo que o produto seja excluido depois.
+--    Por isso tambem guarda uma copia do nome do produto no momento
+--    da alteracao (nome_produto).
+--  * Guarda preco antigo, preco novo e a variacao %, para que o
+--    historico possa ser lido sem recalculos.
+--  * Guarda o usuario do banco e a data/hora: responde "quem mudou o
+--    preco e quando".
+--  * Indice (cd_produto, dt_alteracao): a consulta tipica do log e
+--    "historico de precos do produto X em ordem cronologica".
+-- =========================================================
+CREATE TABLE IF NOT EXISTS LOG_PRECO_PRODUTO (
+    id_log         INT AUTO_INCREMENT PRIMARY KEY,
+    cd_produto     INT           NOT NULL,
+    nome_produto   VARCHAR(100)  NOT NULL,
+    valor_antigo   DECIMAL(10,2) NOT NULL,
+    valor_novo     DECIMAL(10,2) NOT NULL,
+    variacao_pct   DECIMAL(7,2)  NOT NULL,
+    usuario        VARCHAR(100)  NOT NULL,
+    dt_alteracao   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_log_preco_produto_data (cd_produto, dt_alteracao)
+);
+
+
+-- =========================================================
+-- 6.2 FUNCOES
+-- =========================================================
+
+-- ---------------------------------------------------------
+-- FUNCAO 1 - fn_situacao_validade(p_dt_validade)
+-- Retorna a situacao de um lote pela validade:
+--   'VENCIDO'  - validade ja passou
+--   'CRITICO'  - vence em ate 7 dias  (vender com prioridade)
+--   'ATENCAO'  - vence em ate 30 dias (planejar promocao)
+--   'OK'       - mais de 30 dias
+--
+-- Estrutura condicional: IF / ELSEIF / ELSE.
+--
+-- JUSTIFICATIVA SEMANTICA: num hortifruti quase tudo e perecivel, e a
+-- classificacao do lote pela validade e o que decide o que vai para a
+-- frente da gondola, o que entra em promocao e o que deve ser
+-- descartado. Essa regra estava escrita duas vezes (Consulta 5 e visao
+-- vw_situacao_lotes); se a loja decidir que "critico" passa a ser 5
+-- dias, seria preciso lembrar de alterar todos os lugares. A funcao
+-- centraliza a regra de negocio em um unico ponto.
+--
+-- Declarada NO SQL (nao le tabelas) e NOT DETERMINISTIC (depende da
+-- data de hoje). Essas declaracoes sao exigidas pelo MySQL quando o
+-- log binario esta ativo (padrao do MySQL 8).
+-- ---------------------------------------------------------
+DROP FUNCTION IF EXISTS fn_situacao_validade;
+
+DELIMITER $$
+CREATE FUNCTION fn_situacao_validade(p_dt_validade DATE)
+RETURNS VARCHAR(10)
+NOT DETERMINISTIC
+NO SQL
+BEGIN
+    DECLARE v_dias INT;
+
+    IF p_dt_validade IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    SET v_dias = DATEDIFF(p_dt_validade, CURDATE());
+
+    IF v_dias < 0 THEN
+        RETURN 'VENCIDO';
+    ELSEIF v_dias <= 7 THEN
+        RETURN 'CRITICO';
+    ELSEIF v_dias <= 30 THEN
+        RETURN 'ATENCAO';
+    ELSE
+        RETURN 'OK';
+    END IF;
+END$$
+DELIMITER ;
+
+
+-- ---------------------------------------------------------
+-- FUNCAO 2 - fn_estoque_disponivel(p_cd_produto)
+-- Retorna a quantidade de um produto que pode ser vendida: a soma dos
+-- lotes com validade de hoje em diante. Lotes vencidos nao contam.
+--
+-- JUSTIFICATIVA SEMANTICA: estoque fisico e estoque vendavel nao sao a
+-- mesma coisa em um hortifruti. Um lote vencido continua no ESTOQUE
+-- ate ser descartado, mas nao pode ser vendido. Antes de aceitar uma
+-- venda, o sistema precisa saber quanto de fato esta disponivel. A
+-- funcao e usada pelo procedimento sp_baixar_estoque_fefo para
+-- recusar uma baixa maior que o disponivel e pode ser usada em
+-- qualquer consulta (ex.: lista de produtos com estoque vendavel).
+--
+-- Declarada READS SQL DATA (le a tabela ESTOQUE, sem alterar).
+-- ---------------------------------------------------------
+DROP FUNCTION IF EXISTS fn_estoque_disponivel;
+
+DELIMITER $$
+CREATE FUNCTION fn_estoque_disponivel(p_cd_produto INT)
+RETURNS DECIMAL(10,3)
+NOT DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_total DECIMAL(10,3);
+
+    SELECT COALESCE(SUM(quantidade), 0)
+      INTO v_total
+      FROM ESTOQUE
+     WHERE cd_produto  = p_cd_produto
+       AND dt_validade >= CURDATE();
+
+    RETURN v_total;
+END$$
+DELIMITER ;
+
+
+-- =========================================================
+-- 6.3 PROCEDIMENTOS
+-- =========================================================
+
+-- ---------------------------------------------------------
+-- PROCEDIMENTO 1 - sp_reajustar_precos_categoria(categoria, percentual)
+-- [procedimento de ATUALIZACAO DE DADOS]
+--
+-- Reajusta em p_percentual % o preco de todos os produtos de uma
+-- categoria. Ex.: CALL sp_reajustar_precos_categoria(2, 10);
+--   -> +10% em todos os produtos da categoria 2.
+--
+-- Validacoes (SIGNAL interrompe e devolve a mensagem):
+--   * percentual entre -50 e +100 (evita erro de digitacao, como
+--     digitar 100 querendo dizer 10, e preco zerado ou negativo);
+--   * a categoria precisa existir.
+--
+-- JUSTIFICATIVA SEMANTICA: no hortifruti os precos acompanham a
+-- sazonalidade e mudam por GRUPO de produtos - na entressafra das
+-- frutas tropicais, todas sobem juntas; na safra, todas baixam.
+-- Alterar produto por produto e lento e sujeito a erro. O
+-- procedimento faz o reajuste do grupo inteiro em uma operacao,
+-- com regras de seguranca, e cada preco alterado fica registrado
+-- automaticamente no log pelo trigger trg_produto_log_preco.
+-- ---------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_reajustar_precos_categoria;
+
+DELIMITER $$
+CREATE PROCEDURE sp_reajustar_precos_categoria(
+    IN p_cd_categoria INT,
+    IN p_percentual   DECIMAL(6,2)
+)
+BEGIN
+    DECLARE v_categoria VARCHAR(60);
+    DECLARE v_afetados  INT;
+    DECLARE v_msg       VARCHAR(255);
+
+    -- validacao 1: percentual dentro da faixa permitida
+    IF p_percentual IS NULL OR p_percentual < -50 OR p_percentual > 100 THEN
+        SET v_msg = CONCAT('Percentual invalido (', COALESCE(p_percentual, 'nulo'),
+                           '%). Use um valor entre -50 e 100.');
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
+    END IF;
+
+    -- validacao 2: a categoria precisa existir
+    SELECT nm_categoria INTO v_categoria
+      FROM CATEGORIA
+     WHERE cd_categoria = p_cd_categoria;
+
+    IF v_categoria IS NULL THEN
+        SET v_msg = CONCAT('Categoria ', COALESCE(p_cd_categoria, 'nula'), ' nao existe.');
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
+    END IF;
+
+    -- atualizacao: todos os produtos ligados a categoria (tabela TEM)
+    UPDATE PRODUTO p
+      JOIN TEM t ON t.cd_produto = p.cd_produto
+       SET p.valor_kg_ou_unitario = ROUND(p.valor_kg_ou_unitario * (1 + p_percentual / 100), 2)
+     WHERE t.cd_categoria = p_cd_categoria;
+
+    SET v_afetados = ROW_COUNT();
+
+    -- resumo para quem chamou
+    SELECT v_categoria AS categoria,
+           p_percentual AS percentual_aplicado,
+           v_afetados   AS produtos_reajustados;
+END$$
+DELIMITER ;
+
+
+-- ---------------------------------------------------------
+-- PROCEDIMENTO 2 - sp_baixar_estoque_fefo(produto, quantidade)
+-- [procedimento com CURSOR]
+--
+-- Da baixa de uma quantidade vendida de um produto seguindo a regra
+-- FEFO (First Expired, First Out): consome primeiro o lote que vence
+-- primeiro, passando para o proximo lote so quando o anterior acaba.
+--
+-- Passo a passo:
+--   1. Valida a quantidade (> 0).
+--   2. Usa fn_estoque_disponivel: se o disponivel (lotes validos) for
+--      menor que o pedido, recusa e NADA e alterado.
+--   3. O CURSOR percorre os lotes validos do produto em ordem de
+--      validade. Para cada lote:
+--         retirar  = MIN(quanto ainda falta, quanto tem no lote)
+--         atualiza o lote (quantidade - retirar)
+--         registra o que saiu daquele lote
+--         falta    = falta - retirar
+--      e para assim que "falta" chega a zero.
+--   4. Devolve uma tabela com quanto saiu de cada lote.
+--
+-- POR QUE PRECISA DE CURSOR (nao e possivel com um UPDATE):
+--   * A quantidade retirada de cada lote DEPENDE DO RESULTADO DO LOTE
+--     ANTERIOR: o saldo que "falta" e um estado que passa de uma linha
+--     para a proxima. Um UPDATE avalia a mesma expressao para cada
+--     linha de forma independente e nao carrega um saldo entre elas.
+--   * A ORDEM importa (validade crescente) e o processamento PARA no
+--     meio, quando o pedido e atendido; um UPDATE nao tem "parar
+--     quando atingir o total".
+--   * Para cada lote sao feitas DUAS acoes com valores calculados
+--     naquele passo (atualizar o lote e registrar a retirada).
+--
+-- JUSTIFICATIVA SEMANTICA: produtos pereciveis devem sair na ordem de
+-- validade. Se a baixa for feita no lote errado (o mais novo), o lote
+-- mais antigo vence na prateleira e vira perda. A regra FEFO e a
+-- pratica padrao do varejo de alimentos para reduzir desperdicio.
+--
+-- Transacao: o procedimento NAO abre nem fecha transacao - quem chama
+-- decide (COMMIT/ROLLBACK). A validacao do passo 2 garante que o loop
+-- sempre consegue atender o pedido inteiro, entao a baixa nunca fica
+-- pela metade.
+-- ---------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_baixar_estoque_fefo;
+
+DELIMITER $$
+CREATE PROCEDURE sp_baixar_estoque_fefo(
+    IN p_cd_produto INT,
+    IN p_quantidade DECIMAL(10,3)
+)
+BEGIN
+    DECLARE v_falta       DECIMAL(10,3);
+    DECLARE v_disponivel  DECIMAL(10,3);
+    DECLARE v_retirar     DECIMAL(10,3);
+    DECLARE v_lote        INT;
+    DECLARE v_qtd_lote    DECIMAL(10,3);
+    DECLARE v_validade    DATE;
+    DECLARE v_fim         BOOLEAN DEFAULT FALSE;
+    DECLARE v_msg         VARCHAR(255);
+
+    -- cursor: lotes validos e com saldo, do que vence primeiro ao ultimo
+    DECLARE cur_lotes CURSOR FOR
+        SELECT nr_lote, quantidade, dt_validade
+          FROM ESTOQUE
+         WHERE cd_produto  = p_cd_produto
+           AND quantidade  > 0
+           AND dt_validade >= CURDATE()
+         ORDER BY dt_validade, nr_lote;
+
+    -- quando o FETCH nao encontra mais lotes
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_fim = TRUE;
+
+    -- 1. validacao da quantidade
+    IF p_quantidade IS NULL OR p_quantidade <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'A quantidade da baixa deve ser maior que zero.';
+    END IF;
+
+    -- 2. validacao do estoque vendavel (FUNCAO 2)
+    SET v_disponivel = fn_estoque_disponivel(p_cd_produto);
+    IF v_disponivel < p_quantidade THEN
+        SET v_msg = CONCAT('Estoque insuficiente para o produto ', p_cd_produto,
+                           ': disponivel ', v_disponivel, ', solicitado ', p_quantidade, '.');
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
+    END IF;
+
+    -- tabela temporaria com o detalhamento da baixa
+    DROP TEMPORARY TABLE IF EXISTS tmp_baixa_fefo;
+    CREATE TEMPORARY TABLE tmp_baixa_fefo (
+        nr_lote       INT,
+        dt_validade   DATE,
+        qtd_antes     DECIMAL(10,3),
+        qtd_retirada  DECIMAL(10,3),
+        qtd_depois    DECIMAL(10,3)
+    );
+
+    -- 3. percorre os lotes com o cursor
+    SET v_falta = p_quantidade;
+    OPEN cur_lotes;
+
+    percorre_lotes: LOOP
+        FETCH cur_lotes INTO v_lote, v_qtd_lote, v_validade;
+        IF v_fim THEN
+            LEAVE percorre_lotes;
+        END IF;
+
+        -- quanto sai deste lote depende do que ainda falta
+        SET v_retirar = LEAST(v_falta, v_qtd_lote);
+
+        UPDATE ESTOQUE
+           SET quantidade = quantidade - v_retirar
+         WHERE cd_produto = p_cd_produto
+           AND nr_lote    = v_lote;
+
+        INSERT INTO tmp_baixa_fefo
+        VALUES (v_lote, v_validade, v_qtd_lote, v_retirar, v_qtd_lote - v_retirar);
+
+        SET v_falta = v_falta - v_retirar;
+
+        -- pedido atendido: para antes de tocar nos proximos lotes
+        IF v_falta <= 0 THEN
+            LEAVE percorre_lotes;
+        END IF;
+    END LOOP percorre_lotes;
+
+    CLOSE cur_lotes;
+
+    -- 4. resultado: quanto saiu de cada lote
+    SELECT p_cd_produto AS cd_produto, b.*
+      FROM tmp_baixa_fefo b
+     ORDER BY b.dt_validade, b.nr_lote;
+
+    DROP TEMPORARY TABLE tmp_baixa_fefo;
+END$$
+DELIMITER ;
+
+
+-- =========================================================
+-- 6.4 TRIGGERS
+-- =========================================================
+
+-- ---------------------------------------------------------
+-- TRIGGER 1 - trg_produto_log_preco   (AFTER UPDATE ON PRODUTO)
+-- [trigger que ATUALIZA A TABELA DE LOG]
+--
+-- Sempre que o preco de um produto muda, grava uma linha em
+-- LOG_PRECO_PRODUTO com preco antigo, preco novo, variacao %, usuario
+-- e data/hora. Alteracoes que nao mexem no preco (nome, descricao,
+-- marca) NAO geram log.
+--
+-- JUSTIFICATIVA SEMANTICA: o preco e o dado mais sensivel do varejo.
+-- A loja precisa responder "quem mudou o preco do tomate, quando e de
+-- quanto?" - para conferir reajustes, investigar erros de etiqueta e
+-- atender reclamacoes de cliente (o preco cobrado deve ser o
+-- anunciado). Por ser um trigger, o registro e garantido em QUALQUER
+-- caminho de alteracao: pelo procedimento de reajuste, pela aba
+-- Produtos da aplicacao Java ou por um UPDATE direto no DBeaver -
+-- ninguem precisa "lembrar" de gravar o log.
+--
+-- Por que AFTER: o log so deve existir se a alteracao realmente
+-- aconteceu (passou nas restricoes CHECK da tabela).
+-- Por que USER() e nao CURRENT_USER(): dentro de um trigger,
+-- CURRENT_USER() devolve o DONO do trigger; USER() devolve quem esta
+-- conectado e fez a alteracao.
+-- ---------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_produto_log_preco;
+
+DELIMITER $$
+CREATE TRIGGER trg_produto_log_preco
+AFTER UPDATE ON PRODUTO
+FOR EACH ROW
+BEGIN
+    IF NEW.valor_kg_ou_unitario <> OLD.valor_kg_ou_unitario THEN
+        INSERT INTO LOG_PRECO_PRODUTO
+            (cd_produto, nome_produto, valor_antigo, valor_novo, variacao_pct, usuario)
+        VALUES
+            (NEW.cd_produto,
+             NEW.nome,
+             OLD.valor_kg_ou_unitario,
+             NEW.valor_kg_ou_unitario,
+             ROUND(100 * (NEW.valor_kg_ou_unitario - OLD.valor_kg_ou_unitario)
+                       / OLD.valor_kg_ou_unitario, 2),
+             USER());
+    END IF;
+END$$
+DELIMITER ;
+
+
+-- ---------------------------------------------------------
+-- TRIGGER 2 - trg_perda_baixa_estoque   (BEFORE INSERT ON PERDA)
+--
+-- Ao registrar uma perda (produto estragado, amassado, vencido...):
+--   1. bloqueia o registro se o lote nao existir ou se a quantidade
+--      perdida for MAIOR que a quantidade do lote;
+--   2. desconta a quantidade perdida do lote no ESTOQUE.
+--
+-- JUSTIFICATIVA SEMANTICA: perda e saida de estoque. Sem o trigger, e
+-- possivel registrar uma perda e o ESTOQUE continuar mostrando a
+-- mercadoria que ja foi para o lixo - o sistema passa a ter "estoque
+-- fantasma", que gera vendas que nao podem ser entregues e compras
+-- erradas. Tambem nao faz sentido perder mais do que existia no lote.
+-- O trigger mantem PERDA e ESTOQUE coerentes automaticamente.
+--
+-- Por que BEFORE: a verificacao precisa acontecer ANTES de a perda
+-- ser gravada, para poder recusa-la (SIGNAL cancela o INSERT inteiro,
+-- inclusive a baixa no estoque).
+-- ---------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_perda_baixa_estoque;
+
+DELIMITER $$
+CREATE TRIGGER trg_perda_baixa_estoque
+BEFORE INSERT ON PERDA
+FOR EACH ROW
+BEGIN
+    DECLARE v_qtd_lote DECIMAL(10,3);
+    DECLARE v_msg      VARCHAR(255);
+
+    SELECT quantidade INTO v_qtd_lote
+      FROM ESTOQUE
+     WHERE cd_produto = NEW.cd_produto
+       AND nr_lote    = NEW.nr_lote
+       FOR UPDATE;
+
+    IF v_qtd_lote IS NULL THEN
+        SET v_msg = CONCAT('Lote ', NEW.nr_lote, ' do produto ', NEW.cd_produto, ' nao existe no estoque.');
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
+    END IF;
+
+    IF NEW.qt_perdida > v_qtd_lote THEN
+        SET v_msg = CONCAT('Perda de ', NEW.qt_perdida, ' maior que o estoque do lote (',
+                           v_qtd_lote, ').');
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
+    END IF;
+
+    UPDATE ESTOQUE
+       SET quantidade = quantidade - NEW.qt_perdida
+     WHERE cd_produto = NEW.cd_produto
+       AND nr_lote    = NEW.nr_lote;
+END$$
+DELIMITER ;
+
+
+-- =========================================================
+-- 6.5 TESTES
+-- Tudo dentro de uma transacao encerrada com ROLLBACK: pode ser
+-- executado quantas vezes quiser sem alterar os dados.
+--
+-- Observacao: nos dados de exemplo (inser_to.sql) todos os lotes ja
+-- estao vencidos. Para testar a funcao 2 e o FEFO, o teste cria antes
+-- tres lotes novos (com validade futura) para o produto 2 (Maca Gala).
+-- =========================================================
+START TRANSACTION;
+
+-- ---- FUNCAO 1: um exemplo de cada situacao ----
+SELECT fn_situacao_validade(CURDATE() - INTERVAL 1 DAY)  AS ontem,      -- VENCIDO
+       fn_situacao_validade(CURDATE() + INTERVAL 3 DAY)  AS em_3_dias,  -- CRITICO
+       fn_situacao_validade(CURDATE() + INTERVAL 20 DAY) AS em_20_dias, -- ATENCAO
+       fn_situacao_validade(CURDATE() + INTERVAL 60 DAY) AS em_60_dias; -- OK
+
+-- ---- Preparacao: 3 lotes novos da Maca Gala (produto 2) ----
+INSERT INTO ESTOQUE (cd_produto, nr_lote, quantidade, dt_validade, dt_entrada) VALUES
+(2, 2, 10.000, CURDATE() + INTERVAL 5  DAY, CURDATE()),   -- vence primeiro
+(2, 3, 20.000, CURDATE() + INTERVAL 15 DAY, CURDATE()),
+(2, 4, 30.000, CURDATE() + INTERVAL 40 DAY, CURDATE());   -- vence por ultimo
+
+-- FUNCAO 1 aplicada aos lotes do produto 2
+SELECT nr_lote, quantidade, dt_validade, fn_situacao_validade(dt_validade) AS situacao
+  FROM ESTOQUE WHERE cd_produto = 2 ORDER BY dt_validade;
+-- lote 1: VENCIDO | lote 2: CRITICO | lote 3: ATENCAO | lote 4: OK
+
+-- ---- FUNCAO 2: estoque vendavel (o lote 1, vencido, nao entra) ----
+SELECT fn_estoque_disponivel(2) AS disponivel_maca_gala;   -- 60.000
+
+-- ---- PROCEDIMENTO 2 (CURSOR): baixa de 25 kg pela regra FEFO ----
+CALL sp_baixar_estoque_fefo(2, 25);
+-- esperado: lote 2 (vence primeiro) sai inteiro: 10 -> 0
+--           lote 3 cobre o restante:            20 -> 5
+--           lote 4 nao e tocado:                30 -> 30
+
+SELECT nr_lote, quantidade, dt_validade
+  FROM ESTOQUE WHERE cd_produto = 2 ORDER BY dt_validade;
+SELECT fn_estoque_disponivel(2) AS disponivel_apos_baixa;  -- 35.000
+
+-- ---- PROCEDIMENTO 1 + TRIGGER 1: reajuste de 10% na categoria 3 ----
+-- (Frutas Vermelhas: Batata Inglesa, Beterraba e Vagem estao nela)
+SELECT p.cd_produto, p.nome, p.valor_kg_ou_unitario AS preco_antes
+  FROM PRODUTO p JOIN TEM t ON t.cd_produto = p.cd_produto
+ WHERE t.cd_categoria = 3;
+
+CALL sp_reajustar_precos_categoria(3, 10);
+
+-- o trigger gravou uma linha de log para cada preco alterado
+SELECT cd_produto, nome_produto, valor_antigo, valor_novo, variacao_pct, usuario, dt_alteracao
+  FROM LOG_PRECO_PRODUTO
+ ORDER BY id_log;
+
+-- ---- TRIGGER 1: alteracao direta (como faz a aba Produtos do app) ----
+UPDATE PRODUTO SET valor_kg_ou_unitario = 9.99 WHERE cd_produto = 1;           -- gera log
+UPDATE PRODUTO SET descricao = 'Banana Prata da serra' WHERE cd_produto = 1;   -- NAO gera log
+SELECT cd_produto, nome_produto, valor_antigo, valor_novo, variacao_pct
+  FROM LOG_PRECO_PRODUTO WHERE cd_produto = 1;   -- apenas 1 linha (8.47 -> 9.99)
+
+-- ---- TRIGGER 2: perda desconta o estoque do lote ----
+SELECT quantidade AS lote3_antes FROM ESTOQUE WHERE cd_produto = 2 AND nr_lote = 3;   -- 5.000
+
+INSERT INTO PERDA (cd_produto, nr_lote, dt_perda, qt_perdida, motivo_perda, descarte_efetivado)
+VALUES (2, 3, CURDATE(), 2.000, 'Produto amassado', FALSE);
+
+SELECT quantidade AS lote3_depois FROM ESTOQUE WHERE cd_produto = 2 AND nr_lote = 3;  -- 3.000
+
+ROLLBACK;
+
+-- ---- Casos de ERRO (descomente um por vez para ver a mensagem) ----
+-- Procedimento 1 - percentual fora da faixa:
+--   CALL sp_reajustar_precos_categoria(3, 150);
+--   -> Percentual invalido (150.00%). Use um valor entre -50 e 100.
+-- Procedimento 1 - categoria inexistente:
+--   CALL sp_reajustar_precos_categoria(999, 10);
+--   -> Categoria 999 nao existe.
+-- Procedimento 2 - mais do que o estoque vendavel:
+--   CALL sp_baixar_estoque_fefo(2, 1000);
+--   -> Estoque insuficiente para o produto 2: disponivel 0.000, solicitado 1000.000.
+-- Trigger 2 - perda maior que o lote:
+--   INSERT INTO PERDA (cd_produto, nr_lote, dt_perda, qt_perdida, motivo_perda, descarte_efetivado)
+--   VALUES (1, 1, CURDATE(), 9999, 'Teste', FALSE);
+--   -> Perda de 9999.000 maior que o estoque do lote (205.360).
+
+
+-- =========================================================
+-- 6.6 REMOCAO (somente se quiser desfazer a Parte 6)
+-- =========================================================
+-- DROP TRIGGER   IF EXISTS trg_produto_log_preco;
+-- DROP TRIGGER   IF EXISTS trg_perda_baixa_estoque;
+-- DROP PROCEDURE IF EXISTS sp_reajustar_precos_categoria;
+-- DROP PROCEDURE IF EXISTS sp_baixar_estoque_fefo;
+-- DROP FUNCTION  IF EXISTS fn_situacao_validade;
+-- DROP FUNCTION  IF EXISTS fn_estoque_disponivel;
+-- DROP TABLE     IF EXISTS LOG_PRECO_PRODUTO;
