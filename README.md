@@ -1,5 +1,31 @@
 # Sistema Administrativo para Empresa de Varejo do Ramo Hortifrúti
 
+## Sumário
+
+| Etapa | Conteúdo | Seção |
+|---|---|---|
+| Modelagem | Minimundo, esquema relacional e dicionário de dados | [Minimundo](#descrição-do-minimundo) · [Esquema](#4-esquema-relacional) · [Dicionário](#5-dicionário-de-dados) |
+| Etapa 02 | Criação das tabelas com restrições e inserção de dados | [Etapa 02](#etapa-02--criação-das-tabelas-e-inserção-de-dados) |
+| Etapa 03 | Interface funcional (Java + JDBC), CRUD, consultas, dashboard | [Etapa 03](#etapa-03--interface-funcional-com-dashboard) · [Estrutura do projeto](#estrutura-do-projeto) · [Consultas com JOIN](#consultas-com-join) · [Correlação](#gráfico-de-dispersão-e-correlação-de-pearson) |
+| Entrega 4 | Índices, novas consultas (anti join, full outer join, subconsultas) e visões | [Entrega 4](#entrega-4--índices-consultas-e-visões) |
+| Etapa 05 | Funções, procedimentos (um com cursor) e triggers (um de log) | [Etapa 05](#etapa-05--funções-procedimentos-e-triggers) |
+| Entrega final | CRUD em 4 tabelas, integração com a Etapa 05, consultas com filtros, dashboard estatístico interativo | [Entrega final](#entrega-final) |
+
+**Arquivos principais:** [`modelo_fisico.sql`](modelo_fisico.sql) (tabelas) · [`inser_to.sql`](inser_to.sql) (dados) ·
+[`consultas.sql`](consultas.sql) (todo o SQL das etapas 03 a final, em 7 partes) · [`app/`](app/) (aplicação Java)
+
+| Parte do `consultas.sql` | Conteúdo | Etapa |
+|---|---|---|
+| Parte 1 | Consultas 1 a 8 | Etapa 03 |
+| Parte 2 | Consultas do dashboard | Etapa 03 |
+| Parte 3 | Gráfico de dispersão e Pearson | Etapa 03 |
+| Parte 4 | Inserção / alteração / exclusão (CLIENTE, PRODUTO, FUNCIONARIO) | Etapa 03 |
+| Parte 5 | Índices, visões e consultas 9 a 12 | Entrega 4 |
+| Parte 6 | Funções, procedimentos e triggers | Etapa 05 |
+| Parte 7 | SQL usado pela interface final (CRUD de ESTOQUE, rotinas, dashboard com filtros, estatística) | Entrega final |
+
+---
+
 ## Descrição do Minimundo
 
 Uma empresa de varejo do ramo de hortifrúti precisa informatizar o controle administrativo de suas operações de cadastro, compras, estoque, vendas e atendimento aos clientes.
@@ -208,6 +234,42 @@ POSSUI (cd_produto*, nr_venda_mes*, quantidade)
 
 ---
 
+## Etapa 02 — Criação das tabelas e inserção de dados
+
+- [`modelo_fisico.sql`](modelo_fisico.sql) cria o banco `hortifruti` e as 12 tabelas do esquema relacional.
+- [`inser_to.sql`](inser_to.sql) insere os dados de exemplo.
+
+### Restrições de integridade
+
+Além das chaves primárias e estrangeiras do esquema, as tabelas têm restrições que garantem que só
+dados válidos para o negócio entrem no banco:
+
+| Tipo | Onde | Regra |
+|---|---|---|
+| `AUTO_INCREMENT` | chaves de CLIENTE, FUNCIONARIO, FORNECEDOR, PRODUTO, CATEGORIA, PEDIDO, DEVOLUCAO, PERDA | o código é gerado pelo banco |
+| `UNIQUE` | `CLIENTE.cpf_cnpj`, `FUNCIONARIO.cpf`, `FORNECEDOR.cnpj_fornecedor`, `CATEGORIA.nm_categoria`, `DEVOLUCAO.nr_venda_mes` | sem documentos ou categorias repetidos; no máximo uma devolução por pedido (relação 1:1) |
+| `CHECK` | `cpf_cnpj` (11 a 18 caracteres), `cpf` (11), `cnpj_fornecedor` (14) | tamanho dos documentos |
+| `CHECK` | `valor_kg_ou_unitario > 0`, `vl_total >= 0`, `ESTOQUE.quantidade >= 0`, `qt_perdida > 0`, `POSSUI.quantidade > 0` | valores e quantidades coerentes |
+| `CHECK` | `ESTOQUE.dt_validade > dt_entrada` | a validade é posterior à entrada do lote |
+| `CHECK` (domínio) | `forma_pagamento` ∈ {Dinheiro, Cartao de Credito, Cartao de Debito, Pix, Boleto}; `forma_resolucao` ∈ {Troca, Reembolso, Credito, Reparo}; `modo_transporte` ∈ {Rodoviario, Ferroviario, Aereo, Maritimo} | valores permitidos |
+| `DEFAULT` | `forma_pagamento = 'Dinheiro'`, `vendido_unitario = FALSE`, `dt_entrada = data atual`, `devolucao_efetivada / descarte_efetivado = FALSE`, `modo_transporte = 'Rodoviario'` | valores padrão |
+| `ON DELETE SET NULL` | `FUNCIONARIO.nr_funcionario_supervisor` | excluir um supervisor não apaga os subordinados: eles ficam sem supervisor |
+| `ON UPDATE CASCADE` | FKs que apontam para PRODUTO e para ESTOQUE | se o código do produto/lote mudar, as tabelas dependentes acompanham |
+| `ON DELETE RESTRICT` | FKs que apontam para PRODUTO e para ESTOQUE | não é possível excluir produto com estoque, vendas, categorias ou fornecedores, nem lote com perdas |
+
+### Dados de exemplo
+
+| Tabela | Linhas | Tabela | Linhas |
+|---|---|---|---|
+| CLIENTE | 30 (PF e PJ) | PEDIDO | 40 |
+| FUNCIONARIO | 30 (com hierarquia de supervisão) | POSSUI (itens dos pedidos) | 45 |
+| FORNECEDOR | 30 | DEVOLUCAO | 30 |
+| PRODUTO | 30 | PERDA | 30 |
+| CATEGORIA | 30 | FORNECE | 30 |
+| ESTOQUE | 30 (um lote por produto) | TEM | 30 |
+
+---
+
 ## Etapa 03 — Interface funcional com dashboard
 
 - Aplicação Java (Swing + JDBC): pasta [`app/`](app/) — detalhes em [`app/README.md`](app/README.md)
@@ -331,31 +393,36 @@ A tela **nunca** escreve SQL: ela pede ao DAO, o DAO executa o SQL e devolve obj
 
 #### `util/`
 - **`ConnectionFactory.java`** — a "fábrica de conexões". Guarda URL, usuário e senha do banco (lidos do `db.properties` ou da tela de conexão). O método `getConnection()` usa o `DriverManager` do JDBC. Todo DAO pede a conexão aqui.
-- **`Estatistica.java`** — cálculos estatísticos do gráfico de dispersão: coeficiente de correlação de **Pearson** (r), **R²**, **reta de regressão linear** por mínimos quadrados (y = a + b·x) e a classificação da força da correlação.
+- **`Estatistica.java`** — cálculos estatísticos: coeficiente de correlação de **Pearson** (r), **R²** e **reta de regressão linear** (gráfico de dispersão) e a **estatística descritiva** do dashboard (média, mediana, moda/classe modal, variância e desvio padrão amostrais, coeficiente de variação).
 
 #### `model/` — as entidades
 Classes que só guardam dados (atributos + getters/setters). Cada uma espelha uma tabela:
 - **`Cliente.java`** — tabela CLIENTE.
 - **`Produto.java`** — tabela PRODUTO.
 - **`Funcionario.java`** — tabela FUNCIONARIO (tem também `nomeSupervisor`, que vem de um JOIN).
-- **`Consulta.java`** — descreve uma consulta pronta: título, descrição, SQL e (se tiver) o parâmetro.
+- **`Estoque.java`** — tabela ESTOQUE (lote, chave composta), com a situação e o disponível calculados pelas funções da Etapa 05.
+- **`ItemLista.java`** — item de lista de seleção (código + nome), usado nos combos de produto, categoria e lote.
+- **`Consulta.java`** — descreve uma consulta pronta: título, descrição, SQL e os filtros (parâmetros).
 - **`ResultadoConsulta.java`** — resultado de uma consulta: nomes das colunas + linhas.
 
 #### `dao/` — acesso ao banco (**onde está o SQL explícito**)
 DAO = *Data Access Object*.
-- **`ClienteDAO`, `ProdutoDAO`, `FuncionarioDAO`** — o CRUD de cada tabela: `inserir()`, `listar()`, `atualizar()`, `excluir()`. Cada um tem o SQL escrito (`INSERT INTO ... VALUES (?, ?...)`) e usa `PreparedStatement`, que preenche os `?` com segurança (evita *SQL injection*).
-- **`Consultas.java`** — a lista das 8 consultas, com o SQL completo de cada uma (é o mesmo SQL do `consultas.sql`).
-- **`ConsultaDAO.java`** — executa qualquer uma das 8 consultas e lê as colunas do resultado com `ResultSetMetaData`, por isso funciona para todas sem código específico.
-- **`DashboardDAO.java`** — as consultas que alimentam os indicadores e gráficos do dashboard.
+- **`ClienteDAO`, `ProdutoDAO`, `FuncionarioDAO`, `EstoqueDAO`** — o CRUD de cada tabela: `inserir()`, `listar()`, `atualizar()`, `excluir()`. Cada um tem o SQL escrito (`INSERT INTO ... VALUES (?, ?...)`) e usa `PreparedStatement`, que preenche os `?` com segurança (evita *SQL injection*).
+- **`Consultas.java`** — a lista das 14 consultas e visões, com o SQL completo e os filtros de cada uma (o mesmo SQL do `consultas.sql`).
+- **`ConsultaDAO.java`** — executa qualquer uma das consultas, preenchendo os filtros, e lê as colunas do resultado com `ResultSetMetaData`, por isso funciona para todas sem código específico.
+- **`DashboardDAO.java`** — as consultas que alimentam os indicadores, a estatística e os gráficos do dashboard, todas com o filtro de período, categoria e forma de pagamento.
+- **`RotinasDAO.java`** — integração com a Etapa 05: chama os procedimentos com `CallableStatement`, registra perdas (trigger) e lê o log de preços.
+- **`ReferenciaDAO.java`** — listas para os campos de seleção (produtos, categorias, lotes) e o período padrão dos filtros.
 - **`CorrelacaoDAO.java`** — as consultas (com JOIN) que geram os pares (X, Y) do gráfico de dispersão.
 
 #### `view/` — a interface gráfica (Swing)
-- **`MainFrame.java`** — a janela principal com as 7 abas. Recarrega os dados sempre que se troca de aba.
+- **`MainFrame.java`** — a janela principal com as 9 abas (Dashboard, Clientes, Produtos, Funcionarios, Estoque, Consultas, Rotinas do banco, Correlacao, Graficos Estatistica). Recarrega os dados sempre que se troca de aba.
 - **`ConexaoDialog.java`** — a tela inicial que pede usuário/senha e testa a conexão.
 - **`CrudPanel.java`** — **base comum** das telas de cadastro: monta tabela, busca, formulário e os botões Novo/Salvar/Excluir. Cada cadastro só diz *o que* fazer; o `CrudPanel` cuida de *como* mostrar.
-- **`ClientePanel`, `ProdutoPanel`, `FuncionarioPanel`** — os cadastros em si. Herdam do `CrudPanel`, validam os campos (CPF com 11 dígitos, valor > 0...) e chamam o DAO correspondente.
-- **`DashboardPanel.java`** — 6 cards de indicadores + 6 gráficos. Carrega os dados em segundo plano (`SwingWorker`) para a tela não travar.
-- **`ConsultasPanel.java`** — lista das consultas, caixa com o SQL, campo de parâmetro, tabela de resultado e exportação CSV.
+- **`ClientePanel`, `ProdutoPanel`, `FuncionarioPanel`, `EstoquePanel`** — os cadastros em si. Herdam do `CrudPanel`, validam os campos (CPF com 11 dígitos, valor > 0...) e chamam o DAO correspondente.
+- **`DashboardPanel.java`** — filtros (período, categoria, forma de pagamento), 6 cards de indicadores, card de estatística descritiva e 6 gráficos. Carrega os dados em segundo plano (`SwingWorker`) para a tela não travar.
+- **`ConsultasPanel.java`** — lista das consultas, caixa com o SQL, filtros, tabela de resultado, indicadores, gráfico do resultado e exportação CSV.
+- **`RotinasPanel.java`** — aba Rotinas do banco: executa os procedimentos da Etapa 05 e mostra o efeito das funções e dos triggers.
 - **`CorrelacaoPanel.java`** — aba de correlação: escolha do par de variáveis, gráfico de dispersão, interpretação do resultado e o SQL que gera os pontos.
 - **`GraficosEstatisticaPanel.java`** — galeria que mostra as imagens da pasta `graficos/`.
 - **`UI.java`** — utilitários visuais: cores, fontes, formatação de moeda (R$) e a **tradução dos erros do MySQL** (ex.: erro 1451, violação de chave estrangeira, vira "não é possível excluir: registro vinculado a outras tabelas").
@@ -390,7 +457,7 @@ Desenhados à mão com Java2D, sem nenhuma biblioteca externa:
 
 ## Consultas com JOIN
 
-Das 8 consultas, **7 usam JOIN** (o requisito era ao menos 1):
+Das 14 consultas e visões, **12 usam JOIN** (o requisito da Etapa 03 era ao menos 1):
 
 | # | Consulta | JOINs utilizados |
 |---|---|---|
@@ -402,8 +469,14 @@ Das 8 consultas, **7 usam JOIN** (o requisito era ao menos 1):
 | 6 | Conferência de pedidos | PEDIDO ⋈ CLIENTE ⋈ POSSUI ⋈ PRODUTO ⟕ DEVOLUCAO |
 | 7 | Vendas mensais × forma de pagamento | — (agregação condicional / pivot) |
 | 8 | Produtos nunca vendidos | PRODUTO ⟕ TEM ⟕ CATEGORIA + NOT EXISTS |
+| 9 | Clientes que nunca compraram | CLIENTE ⟕ PEDIDO (**anti join**) |
+| 10 | Vendido × perdido por produto | vendas ⟕ perdas ∪ vendas ⟖ perdas (**full outer join** emulado) ⋈ PRODUTO |
+| 11 | Clientes acima da média de gasto | (subconsulta derivada) ⋈ CLIENTE |
+| 12 | Pedidos acima da média da forma de pagamento | — (subconsultas correlacionada e IN) |
+| 13 | Visão `vw_vendas_detalhadas` | PEDIDO ⋈ CLIENTE ⋈ POSSUI ⋈ PRODUTO ⟕ DEVOLUCAO |
+| 14 | Visão `vw_situacao_lotes` | ESTOQUE ⋈ PRODUTO ⟕ perdas ⟕ FORNECE ⟕ FORNECEDOR |
 
-(⋈ = INNER JOIN, ⟕ = LEFT JOIN). As consultas do gráfico de dispersão também usam JOIN.
+(⋈ = INNER JOIN, ⟕ = LEFT JOIN, ⟖ = RIGHT JOIN). As consultas do gráfico de dispersão também usam JOIN.
 
 ---
 
