@@ -699,3 +699,182 @@ Casos de erro (comentados no script, com a mensagem esperada):
 Na aplicação Java, essas mensagens de regra de negócio (`SIGNAL`, código 1644) aparecem exatamente como
 escritas acima. Depois que a Parte 6 é executada no banco, qualquer alteração de preço feita pela aba
 **Produtos** passa a ser registrada no log automaticamente.
+
+---
+
+## Entrega final
+
+Versão definitiva da aplicação, integrada ao banco, consolidando as funcionalidades de todas as etapas.
+O SQL novo que a interface usa está documentado na **Parte 7** do [`consultas.sql`](consultas.sql)
+(seção *"PARTE 7 - ENTREGA FINAL"*).
+
+### O que rodar no banco
+
+| Ordem | Script | Quando |
+|---|---|---|
+| 1 | `modelo_fisico.sql` | só se o banco `hortifruti` ainda não existir |
+| 2 | `inser_to.sql` | só se o banco acabou de ser criado |
+| 3 | `consultas.sql` **Parte 5** (Entrega 4) | se as visões e os índices ainda não existirem |
+| 4 | `consultas.sql` **Parte 6** (Etapa 05) | se as funções, procedimentos e triggers ainda não existirem |
+| — | `consultas.sql` **Parte 7** | opcional: não cria nada, só documenta e confere o SQL usado pela interface |
+
+> Atalho: num banco recém-criado, basta executar o `consultas.sql` inteiro (Partes 1 a 7) no DBeaver
+> com **Alt+X**. Todos os testes que alteram dados rodam dentro de transação com `ROLLBACK`.
+
+### Atendimento aos requisitos
+
+| Requisito | Como foi atendido |
+|---|---|
+| **CRUD em ao menos 4 tabelas** | **CLIENTE, PRODUTO, FUNCIONARIO e ESTOQUE** — inserir, alterar, excluir e buscar, cada um na sua aba |
+| **Interface executa/visualiza funções, procedimentos e triggers** | Aba **Rotinas do banco** executa os 2 procedimentos e dispara os 2 triggers, mostrando o efeito; a aba **Estoque** exibe o resultado das 2 funções em cada lote |
+| **Consultas e views acessíveis, com filtros** | Aba **Consultas**: as 14 consultas/visões das Etapas 03 e 04, com o SQL exibido e **filtros** (período, forma de pagamento, situação, tipo de cliente, produto, bairro, mínimo de pedidos) |
+| **Apresentação visual clara de cada consulta** | Cada resultado vem com **faixa de indicadores** (linhas, soma, média, mínimo, máximo, grupos distintos) e **gráfico de barras** configurável (agrupar por / valor) |
+| **Dashboard com indicadores** | 6 cards: pedidos, faturamento, ticket médio, clientes ativos (**% da base**), **% de pedidos com devolução**, prejuízo com perdas (**% do faturamento**) |
+| **Estatística (média, mediana, moda, variância, desvio padrão)** | Card **Estatística descritiva** com n, média, mediana, moda, variância, desvio padrão, coeficiente de variação, mínimo e máximo, para 3 variáveis à escolha |
+| **Ao menos 6 gráficos dinâmicos** | 6 gráficos no Dashboard (colunas com linha de tendência, 2 roscas, 3 barras) + gráfico de dispersão com Pearson (aba Correlação) + gráfico de cada consulta |
+| **Visualizações interativas com filtros** | Barra de filtros do Dashboard (**período, categoria e forma de pagamento**) aplicada a **todos** os cards, à estatística e aos 6 gráficos |
+| **Tudo sobre os dados do banco** | Todos os números vêm de consultas SQL sobre o banco `hortifruti` (a aba de imagens de Estatística é complementar) |
+
+### 1. CRUD da 4ª tabela: ESTOQUE (aba "Estoque")
+
+- **Inserir lote:** produto, nº do lote (o sistema sugere o próximo número livre), quantidade, data de
+  entrada e validade (a validade precisa ser posterior à entrada).
+- **Alterar lote:** quantidade e datas. Produto e lote formam a **chave primária composta** e por isso
+  ficam bloqueados na edição.
+- **Excluir lote:** o banco impede excluir um lote que tem perdas registradas (chave estrangeira de
+  `PERDA`), e a tela mostra uma mensagem clara.
+- **Integração com a Etapa 05:** a listagem mostra, para cada lote, a **situação** calculada por
+  `fn_situacao_validade` (VENCIDO / CRITICO / ATENCAO / OK) e o **estoque disponível para venda** do
+  produto calculado por `fn_estoque_disponivel`.
+
+**Por que ESTOQUE:** é a tabela central da operação de um hortifrúti (produtos perecíveis controlados
+por lote) e a que as rotinas da Etapa 05 manipulam. Ter o CRUD dela permite, por exemplo, cadastrar
+um lote novo e em seguida dar baixa FEFO ou registrar uma perda nele.
+
+Arquivos: `model/Estoque.java`, `dao/EstoqueDAO.java`, `view/EstoquePanel.java`. Para suportar a chave
+composta, o `CrudPanel` ganhou dois pontos de extensão (`chaveDaLinha` e `rotuloRegistro`).
+
+### 2. Integração com funções, procedimentos e triggers (aba "Rotinas do banco")
+
+| Card | O que executa | O que mostra |
+|---|---|---|
+| **Reajuste de preços por categoria** | `{CALL sp_reajustar_precos_categoria(?, ?)}` | quantos produtos foram reajustados e, na aba *Histórico de preços*, as linhas gravadas em `LOG_PRECO_PRODUTO` pelo **trigger** `trg_produto_log_preco` |
+| **Baixa de estoque (FEFO)** | `{CALL sp_baixar_estoque_fefo(?, ?)}` — procedimento com **cursor** | o estoque vendável do produto (**função** `fn_estoque_disponivel`) e uma tabela com quanto saiu de cada lote, do que vence primeiro ao último |
+| **Registrar perda** | `INSERT INTO PERDA ...` | o estoque do lote **antes e depois**, mostrando o desconto feito pelo **trigger** `trg_perda_baixa_estoque` |
+
+- Os procedimentos são chamados com `CallableStatement` dentro de uma **transação** (tudo ou nada).
+- As mensagens de regra de negócio (`SIGNAL`), como *"Estoque insuficiente..."* ou *"Perda maior que o
+  estoque do lote"*, aparecem na tela exatamente como escritas no banco.
+- Toda alteração pede confirmação, porque é gravada no banco.
+- O trigger de log também registra as mudanças de preço feitas pela aba **Produtos**.
+
+Arquivos: `dao/RotinasDAO.java`, `view/RotinasPanel.java`.
+
+### 3. Consultas e visões com filtros e apresentação visual (aba "Consultas")
+
+- Os filtros são montados automaticamente a partir da definição de cada consulta: **listas de seleção**
+  para valores conhecidos, **campos de data** e **campos de texto**. Cada filtro preenche um `?` do SQL
+  via `PreparedStatement`.
+
+| Consulta | Filtros |
+|---|---|
+| 2. Ranking de clientes | mínimo de pedidos |
+| 5. Lotes vencidos / a vencer | janela de dias |
+| 6. Conferência de pedidos | forma de pagamento |
+| 9. Clientes que nunca compraram (anti join) | bairro, tipo de cliente (PF/PJ) |
+| 10. Vendido × perdido (full outer join) | situação (só venda, só perda, perde mais do que vende...) |
+| 11. Clientes acima da média (subconsultas) | mínimo de pedidos |
+| 12. Pedidos acima da média (subconsultas) | forma de pagamento |
+| 13. Visão `vw_vendas_detalhadas` | período (de/até), forma de pagamento, produto |
+| 14. Visão `vw_situacao_lotes` | situação do lote, produto |
+
+- **Indicadores do resultado:** número de linhas e, para a coluna numérica escolhida, soma, média,
+  mínimo, máximo e quantidade de grupos distintos.
+- **Gráfico do resultado:** barras somando a coluna "Valor" por grupo da coluna "Agrupar por" (até os
+  15 maiores grupos). O sistema escolhe colunas sensatas por padrão, priorizando valores em R$, e o
+  usuário pode trocar. Exemplo: na visão de vendas, *subtotal por mês* ou *subtotal por produto*.
+
+Arquivos: `model/Consulta.java` (agora com vários parâmetros), `dao/ConsultaDAO.java`,
+`dao/Consultas.java`, `view/ConsultasPanel.java`.
+
+### 4. Dashboard estatístico com filtros (aba "Dashboard")
+
+**Filtros** (barra no topo): **período** (de/até; o padrão vai da primeira à última data com movimento
+no banco), **categoria** e **forma de pagamento**. Clicar em **Aplicar filtros** recalcula tudo; o
+**Limpar** volta ao padrão. Uma linha abaixo resume o filtro em uso.
+
+> As medidas de venda são calculadas a partir dos **itens vendidos** (`POSSUI × PRODUTO`). Assim, ao
+> filtrar uma categoria, entram só os itens daquela categoria. Sem filtro, o total é igual à soma do
+> `vl_total` dos pedidos. As **perdas** usam a data da perda e não dependem da forma de pagamento.
+
+**Indicadores (6 cards):**
+
+| Card | Cálculo |
+|---|---|
+| Pedidos | pedidos distintos no filtro |
+| Faturamento | soma de quantidade × preço dos itens |
+| Ticket médio | faturamento ÷ pedidos |
+| Clientes ativos | clientes com pedido no filtro, e o **%** sobre o total de clientes |
+| Pedidos c/ devolução | **%** dos pedidos do filtro que têm devolução |
+| Prejuízo c/ perdas | quantidade perdida × preço, e o **%** sobre o faturamento |
+
+**Estatística descritiva** (inspirada na disciplina de Estatística), com escolha da variável:
+*valor do pedido (R$)*, *itens por pedido* ou *quantidade vendida por item*.
+
+| Medida | Como é calculada |
+|---|---|
+| Média | soma ÷ n |
+| Mediana | valor central da amostra ordenada (média dos dois centrais se n for par) |
+| Moda | valor mais frequente; se nenhum valor se repete (variável contínua, como R$), a **classe modal** de uma distribuição de frequências com *k = 1 + 3,3·log₁₀(n)* classes (**regra de Sturges**) |
+| Variância | **amostral**: Σ(x − x̄)² ÷ (n − 1) |
+| Desvio padrão | raiz quadrada da variância |
+| Coef. de variação | desvio ÷ média × 100 (dispersão relativa) |
+| Mínimo / máximo | extremos da amostra |
+
+Os valores foram conferidos com o cálculo feito direto no SQL (`AVG`, `VAR_SAMP`, `STDDEV_SAMP` e
+mediana com `ROW_NUMBER()`), na seção 7.4 do `consultas.sql`. Sem filtro: n = 40, média = R$ 58,28,
+mediana = R$ 44,86, variância = 2.148,54, desvio = R$ 46,35, CV = 79,5%.
+
+**6 gráficos dinâmicos**, todos respeitando os filtros:
+1. Faturamento mensal (colunas + linha de tendência)
+2. Faturamento por forma de pagamento (rosca, com %)
+3. Top 10 produtos por quantidade vendida (barras)
+4. Faturamento por categoria (barras)
+5. Quantidade perdida por motivo (barras)
+6. Devoluções por forma de resolução (rosca, com %)
+
+A aba **Correlação** complementa o dashboard com o gráfico de dispersão, o coeficiente de Pearson e a
+reta de regressão.
+
+Arquivos: `dao/DashboardDAO.java` (reescrito com `Filtro`), `dao/ReferenciaDAO.java` (listas e período
+padrão), `util/Estatistica.java` (estatística descritiva), `view/DashboardPanel.java`.
+
+### 5. Testes realizados
+
+Tudo foi testado num banco MySQL temporário (`modelo_fisico.sql` + `inser_to.sql` + `consultas.sql`
+completo), com log binário ativo, como no MySQL padrão:
+
+- `consultas.sql` inteiro (Partes 1 a 7) executa sem erro e não deixa dados alterados.
+- As 14 consultas executam pela aplicação com os filtros padrão e com filtros específicos.
+  Exemplos: visão de vendas em agosto/Pix → 1 item; consulta 10 "só perda" → 4 produtos.
+- Dashboard: os totais sem filtro batem com as consultas anteriores (40 pedidos, R$ 2.331,05). Com
+  filtro de categoria e de período/forma de pagamento, todos os cards e gráficos são recalculados.
+- CRUD de Estoque: inserir, alterar e excluir lotes; exclusão de lote com perda é bloqueada (erro 1451).
+- Rotinas: baixa FEFO de 50 sobre lotes de 40 e 35 → 40 saem do primeiro e 10 do segundo; baixa acima
+  do disponível é recusada; reajuste de +5% gera 3 linhas de log; perda de 1,5 desconta o lote
+  (25 → 23,5); perda maior que o lote é recusada.
+
+### Estrutura atualizada (arquivos novos desta entrega)
+
+```
+app/src/
+  model/Estoque.java            lote de estoque (chave composta)
+  model/ItemLista.java          item de lista de seleção (código + nome)
+  dao/EstoqueDAO.java           CRUD da tabela ESTOQUE (usa as 2 funções na listagem)
+  dao/RotinasDAO.java           CALL dos procedimentos, perda (trigger), log de preços
+  dao/ReferenciaDAO.java        listas de produtos, categorias, lotes e período dos dados
+  view/EstoquePanel.java        aba Estoque
+  view/RotinasPanel.java        aba Rotinas do banco
+  (alterados) DashboardDAO, DashboardPanel, Consulta, ConsultaDAO, Consultas, ConsultasPanel,
+              CrudPanel, Estatistica, UI, MainFrame, chart/Grafico
+```

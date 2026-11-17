@@ -46,7 +46,7 @@ public abstract class CrudPanel extends JPanel {
             int v = tabela.getSelectedRow();
             if (v >= 0) {
                 int linha = tabela.convertRowIndexToModel(v);
-                idSelecionado = (Integer) modelo.getValueAt(linha, 0);
+                idSelecionado = chaveDaLinha(linha);
                 preencherFormulario(linha);
                 atualizarModo();
             }
@@ -144,7 +144,7 @@ public abstract class CrudPanel extends JPanel {
             modoLabel.setText("Novo registro");
             modoLabel.setForeground(UI.VERDE);
         } else {
-            modoLabel.setText("Editando registro #" + idSelecionado);
+            modoLabel.setText("Editando " + rotuloRegistro(idSelecionado));
             modoLabel.setForeground(UI.PALETA[3]);
         }
     }
@@ -185,7 +185,7 @@ public abstract class CrudPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Selecione um registro na tabela para excluir.");
             return;
         }
-        int r = JOptionPane.showConfirmDialog(this, "Excluir o registro #" + idSelecionado + "?",
+        int r = JOptionPane.showConfirmDialog(this, "Excluir " + rotuloRegistro(idSelecionado) + "?",
             "Confirmar exclusao", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (r != JOptionPane.YES_OPTION) return;
         try {
@@ -214,6 +214,19 @@ public abstract class CrudPanel extends JPanel {
 
     protected static String texto(Object valor) {
         return valor == null ? "" : valor.toString();
+    }
+
+    /**
+     * Identificador do registro de uma linha da tabela. Padrao: o valor da 1a coluna (chave simples).
+     * Tabelas com chave composta (ex.: ESTOQUE) sobrescrevem e usam o indice da linha.
+     */
+    protected Integer chaveDaLinha(int linhaModelo) {
+        return (Integer) modelo.getValueAt(linhaModelo, 0);
+    }
+
+    /** Texto que identifica o registro nas mensagens (ex.: "registro #12"). */
+    protected String rotuloRegistro(int id) {
+        return "registro #" + id;
     }
 
     // ---------- operacoes implementadas por cada cadastro ----------

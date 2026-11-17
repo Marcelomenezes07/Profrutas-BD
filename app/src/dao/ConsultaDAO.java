@@ -5,19 +5,29 @@ import model.ResultadoConsulta;
 import util.ConnectionFactory;
 
 import java.sql.*;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Executa as consultas pre-definidas (Consultas.TODAS) e devolve colunas + linhas. */
 public class ConsultaDAO {
-    public ResultadoConsulta executar(Consulta consulta, String parametro) throws SQLException {
+    /**
+     * @param valores um valor (texto) para cada parametro da consulta, na ordem dos "?".
+     *                Datas no formato yyyy-MM-dd.
+     */
+    public ResultadoConsulta executar(Consulta consulta, List<String> valores) throws SQLException {
         long inicio = System.currentTimeMillis();
         try (Connection conn = ConnectionFactory.getConnection();
              PreparedStatement ps = conn.prepareStatement(consulta.getSql())) {
-            switch (consulta.getTipoParametro()) {
-                case INTEIRO -> ps.setInt(1, Integer.parseInt(parametro.trim()));
-                case TEXTO -> ps.setString(1, parametro);
-                case NENHUM -> { }
+            List<Consulta.Parametro> parametros = consulta.getParametros();
+            for (int i = 0; i < parametros.size(); i++) {
+                String valor = valores.get(i);
+                switch (parametros.get(i).tipo()) {
+                    case INTEIRO -> ps.setInt(i + 1, Integer.parseInt(valor.trim()));
+                    case DATA -> ps.setDate(i + 1, Date.valueOf(LocalDate.parse(valor.trim())));
+                    case TEXTO -> ps.setString(i + 1, valor);
+                    case NENHUM -> { }
+                }
             }
             try (ResultSet rs = ps.executeQuery()) {
                 ResultSetMetaData md = rs.getMetaData();

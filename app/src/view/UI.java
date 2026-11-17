@@ -44,6 +44,9 @@ public final class UI {
 
     public static String moeda(double v) { return MOEDA.format(v); }
     public static String numero(double v) { return NUMERO.format(v); }
+    public static String dataBr(java.time.LocalDate d) {
+        return d.format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+    }
 
     public static void aplicarTema() {
         try {
@@ -105,6 +108,49 @@ public final class UI {
         t.setDefaultRenderer(Number.class, numeros);
         t.setDefaultRenderer(Integer.class, numeros);
         t.setDefaultRenderer(java.math.BigDecimal.class, numeros);
+        DefaultTableCellRenderer datas = new DefaultTableCellRenderer() {
+            @Override
+            protected void setValue(Object v) {
+                if (v instanceof java.sql.Date d) v = dataBr(d.toLocalDate());
+                else if (v instanceof java.time.LocalDate d) v = dataBr(d);
+                super.setValue(v);
+            }
+        };
+        datas.setHorizontalAlignment(SwingConstants.CENTER);
+        t.setDefaultRenderer(java.sql.Date.class, datas);
+        t.setDefaultRenderer(java.util.Date.class, datas);
+        t.setDefaultRenderer(java.time.LocalDate.class, datas);
+    }
+
+    /** Campo de data (dd/MM/yyyy) com setas para mudar o dia. */
+    public static JSpinner campoData(java.time.LocalDate inicial) {
+        JSpinner sp = new JSpinner(new SpinnerDateModel());
+        sp.setEditor(new JSpinner.DateEditor(sp, "dd/MM/yyyy"));
+        definirData(sp, inicial);
+        return sp;
+    }
+
+    public static void definirData(JSpinner sp, java.time.LocalDate data) {
+        sp.setValue(java.util.Date.from(data.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant()));
+    }
+
+    public static java.time.LocalDate lerData(JSpinner sp) {
+        try {
+            sp.commitEdit();
+        } catch (java.text.ParseException e) {
+            throw new IllegalArgumentException("Data invalida. Use o formato dd/mm/aaaa.");
+        }
+        return ((java.util.Date) sp.getValue()).toInstant()
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+    }
+
+    /** Converte um numero digitado (aceita virgula ou ponto). */
+    public static java.math.BigDecimal lerNumero(String texto, String campo) {
+        try {
+            return new java.math.BigDecimal(texto.trim().replace(',', '.'));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Valor invalido em \"" + campo + "\". Use numeros, ex.: 12,5");
+        }
     }
 
     /** Tipo da coluna inferido pelo primeiro valor nao nulo (ordenacao numerica correta). */
@@ -130,6 +176,8 @@ public final class UI {
                 case 1048 -> "Um campo obrigatorio ficou vazio.\n\nDetalhe: " + sql.getMessage();
                 case 1045 -> "Usuario ou senha do MySQL incorretos.";
                 case 1644 -> sql.getMessage();   // regra de negocio (SIGNAL em procedimento/trigger)
+                case 1305 -> "Funcao ou procedimento inexistente no banco. Execute antes a Parte 6 (Etapa 05) "
+                           + "do arquivo consultas.sql.\n\nDetalhe: " + sql.getMessage();
                 case 1146 -> "Tabela ou visao inexistente no banco. Se for uma das visoes (vw_...), execute antes "
                            + "a Parte 5 (Entrega 4) do arquivo consultas.sql.\n\nDetalhe: " + sql.getMessage();
                 case 1049 -> "O banco 'hortifruti' nao existe. Execute modelo_fisico.sql e inser_to.sql primeiro.";

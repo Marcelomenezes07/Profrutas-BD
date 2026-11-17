@@ -11,6 +11,8 @@ public class MainFrame extends JFrame {
     private final ClientePanel clientes = new ClientePanel();
     private final ProdutoPanel produtos = new ProdutoPanel();
     private final FuncionarioPanel funcionarios = new FuncionarioPanel();
+    private final EstoquePanel estoque = new EstoquePanel();
+    private final RotinasPanel rotinas = new RotinasPanel();
     private final ConsultasPanel consultas = new ConsultasPanel();
     private final CorrelacaoPanel correlacao = new CorrelacaoPanel();
     private final GraficosEstatisticaPanel estatistica = new GraficosEstatisticaPanel();
@@ -28,7 +30,9 @@ public class MainFrame extends JFrame {
         abas.addTab("Clientes", clientes);
         abas.addTab("Produtos", produtos);
         abas.addTab("Funcionarios", funcionarios);
+        abas.addTab("Estoque", estoque);
         abas.addTab("Consultas", consultas);
+        abas.addTab("Rotinas do banco", rotinas);
         abas.addTab("Correlacao", correlacao);
         abas.addTab("Graficos Estatistica", estatistica);
 
@@ -39,6 +43,8 @@ public class MainFrame extends JFrame {
             else if (atual == clientes) clientes.carregar();
             else if (atual == produtos) produtos.carregar();
             else if (atual == funcionarios) funcionarios.carregar();
+            else if (atual == estoque) estoque.carregar();
+            else if (atual == rotinas) rotinas.carregar();
             else if (atual == correlacao) correlacao.carregar();
             else if (atual == estatistica) estatistica.carregar();
         });

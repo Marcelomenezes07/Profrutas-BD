@@ -10,7 +10,7 @@ import java.util.function.DoubleFunction;
 
 /** Base dos graficos desenhados com Java2D (sem bibliotecas externas). */
 public abstract class Grafico extends JPanel {
-    protected final String titulo;
+    protected String titulo;
     protected Map<String, Double> dados = new LinkedHashMap<>();
     protected DoubleFunction<String> formato = UI::numero;
 
@@ -23,6 +23,11 @@ public abstract class Grafico extends JPanel {
 
     public void setDados(Map<String, Double> dados) {
         this.dados = dados;
+        repaint();
+    }
+
+    public void setTitulo(String titulo) {
+        this.titulo = titulo;
         repaint();
     }
 

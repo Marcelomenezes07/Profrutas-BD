@@ -11,6 +11,8 @@
 --             FUNCIONARIO)
 --   PARTE 5 - Entrega 4: indices, visoes e novas consultas (9 a 12)
 --   PARTE 6 - Etapa 05: funcoes, procedimentos e triggers
+--   PARTE 7 - Entrega final: SQL usado pela interface (CRUD de ESTOQUE,
+--             rotinas da Etapa 05, dashboard com filtros e estatistica)
 --
 -- Obs.: na aplicacao, os valores variaveis sao "?" preenchidos via
 -- PreparedStatement. Neste arquivo eles aparecem como valores de
@@ -1510,3 +1512,343 @@ ROLLBACK;
 -- DROP FUNCTION  IF EXISTS fn_situacao_validade;
 -- DROP FUNCTION  IF EXISTS fn_estoque_disponivel;
 -- DROP TABLE     IF EXISTS LOG_PRECO_PRODUTO;
+
+
+-- #########################################################
+-- PARTE 7 - ENTREGA FINAL: SQL USADO PELA INTERFACE
+--
+--   7.1 CRUD da 4a tabela: ESTOQUE (aba "Estoque")
+--   7.2 Integracao com a Etapa 05 (aba "Rotinas do banco")
+--   7.3 Dashboard com filtros (periodo, categoria, forma de pagamento)
+--   7.4 Estatistica descritiva (media, mediana, variancia, desvio)
+--   7.5 Consultas 9 a 14 com filtros (aba "Consultas")
+--
+-- Esta parte NAO cria objetos novos no banco: ela documenta os
+-- comandos que a aplicacao Java executa. Os "?" sao preenchidos pela
+-- aplicacao (PreparedStatement / CallableStatement); aqui aparecem
+-- como variaveis @ para que tudo rode direto no DBeaver.
+-- Pre-requisito: Partes 5 e 6 executadas (visoes, funcoes,
+-- procedimentos e triggers).
+-- #########################################################
+
+
+-- =========================================================
+-- 7.1 CRUD DA TABELA ESTOQUE  (dao/EstoqueDAO.java)
+--
+-- ESTOQUE tem chave composta (cd_produto, nr_lote). Na alteracao a
+-- chave nao muda: so quantidade e datas.
+-- A listagem usa as duas FUNCOES da Etapa 05 para mostrar a situacao
+-- de cada lote e o estoque vendavel do produto.
+-- =========================================================
+
+-- LISTAR - EstoqueDAO.listar()
+SELECT e.cd_produto, p.nome, e.nr_lote, e.quantidade, e.dt_entrada, e.dt_validade,
+       fn_situacao_validade(e.dt_validade)  AS situacao,
+       fn_estoque_disponivel(e.cd_produto)  AS disponivel_produto
+FROM ESTOQUE e
+JOIN PRODUTO p ON p.cd_produto = e.cd_produto
+ORDER BY p.nome, e.dt_validade, e.nr_lote;
+
+-- SUGESTAO DO PROXIMO LOTE - EstoqueDAO.proximoLote(?)
+--   SELECT COALESCE(MAX(nr_lote), 0) + 1 FROM ESTOQUE WHERE cd_produto = ?;
+-- INSERIR - EstoqueDAO.inserir()
+--   INSERT INTO ESTOQUE (cd_produto, nr_lote, quantidade, dt_entrada, dt_validade) VALUES (?, ?, ?, ?, ?);
+-- ALTERAR - EstoqueDAO.atualizar()
+--   UPDATE ESTOQUE SET quantidade=?, dt_entrada=?, dt_validade=? WHERE cd_produto=? AND nr_lote=?;
+-- EXCLUIR - EstoqueDAO.excluir()   (bloqueado pela FK se o lote tiver perdas - erro 1451)
+--   DELETE FROM ESTOQUE WHERE cd_produto=? AND nr_lote=?;
+
+-- Exemplo executavel (transacao com ROLLBACK)
+START TRANSACTION;
+SET @prod = 2;
+SELECT COALESCE(MAX(nr_lote), 0) + 1 INTO @lote FROM ESTOQUE WHERE cd_produto = @prod;
+
+INSERT INTO ESTOQUE (cd_produto, nr_lote, quantidade, dt_entrada, dt_validade)
+VALUES (@prod, @lote, 40.000, CURDATE(), CURDATE() + INTERVAL 10 DAY);
+
+UPDATE ESTOQUE SET quantidade = 35.500
+WHERE cd_produto = @prod AND nr_lote = @lote;
+
+SELECT nr_lote, quantidade, fn_situacao_validade(dt_validade) AS situacao,
+       fn_estoque_disponivel(cd_produto) AS disponivel
+FROM ESTOQUE WHERE cd_produto = @prod AND nr_lote = @lote;   -- 35.500 | ATENCAO | 35.500
+
+DELETE FROM ESTOQUE WHERE cd_produto = @prod AND nr_lote = @lote;
+ROLLBACK;
+
+
+-- =========================================================
+-- 7.2 INTEGRACAO COM A ETAPA 05  (dao/RotinasDAO.java)
+-- =========================================================
+
+-- Funcao 2 - estoque vendavel do produto escolhido (atualiza ao trocar o produto)
+--   SELECT fn_estoque_disponivel(?);
+
+-- Procedimento 1 - reajuste por categoria (CallableStatement, em transacao)
+--   {CALL sp_reajustar_precos_categoria(?, ?)}
+--   -> cada preco alterado dispara trg_produto_log_preco
+
+-- Procedimento 2 - baixa FEFO com cursor (CallableStatement, em transacao)
+--   {CALL sp_baixar_estoque_fefo(?, ?)}
+--   -> o result set mostra quanto saiu de cada lote
+
+-- Trigger 2 - registrar perda: le o lote, insere a perda e le de novo
+--   SELECT quantidade FROM ESTOQUE WHERE cd_produto=? AND nr_lote=?;      -- antes
+--   INSERT INTO PERDA (cd_produto, nr_lote, dt_perda, qt_perdida, motivo_perda, descarte_efetivado)
+--   VALUES (?, ?, CURDATE(), ?, ?, ?);                                    -- dispara o trigger
+--   SELECT quantidade FROM ESTOQUE WHERE cd_produto=? AND nr_lote=?;      -- depois
+
+-- Lista de lotes do produto (campo "Lote")
+--   SELECT nr_lote, CONCAT('Lote ', nr_lote, ' - ', quantidade, ' em estoque - validade ',
+--                          DATE_FORMAT(dt_validade, '%d/%m/%Y'))
+--   FROM ESTOQUE WHERE cd_produto = ? ORDER BY dt_validade;
+
+-- Categorias que tem produtos (as unicas em que o reajuste tem efeito)
+SELECT c.cd_categoria,
+       CONCAT(c.nm_categoria, ' (', COUNT(t.cd_produto), ' produto(s))') AS categoria
+FROM CATEGORIA c
+JOIN TEM t ON t.cd_categoria = c.cd_categoria
+GROUP BY c.cd_categoria, c.nm_categoria
+ORDER BY c.nm_categoria;
+
+-- Historico de precos gravado pelo trigger 1
+SELECT id_log, dt_alteracao, cd_produto, nome_produto,
+       valor_antigo, valor_novo, variacao_pct, usuario
+FROM LOG_PRECO_PRODUTO
+ORDER BY id_log DESC;
+
+
+-- =========================================================
+-- 7.3 DASHBOARD COM FILTROS  (dao/DashboardDAO.java)
+--
+-- Todos os indicadores e graficos recebem o mesmo filtro:
+--   @ini, @fim  -> periodo (data da venda; nas perdas, data da perda)
+--   @forma      -> forma de pagamento ('%' = todas)
+--   @cat        -> categoria (0 = todas)
+-- As medidas de venda sao somadas a partir dos ITENS (POSSUI x
+-- PRODUTO), para que o filtro de categoria considere apenas os itens
+-- daquela categoria. Sem filtro de categoria o total e igual ao
+-- vl_total dos pedidos.
+--
+-- Condicao comum (FILTRO_ITENS no codigo Java):
+--   pe.dt_venda BETWEEN ? AND ?
+--   AND pe.forma_pagamento LIKE ?
+--   AND (? = 0 OR EXISTS (SELECT 1 FROM TEM t
+--                         WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = ?))
+-- =========================================================
+
+-- Periodo padrao dos filtros: da primeira a ultima data com movimento
+SELECT LEAST(COALESCE((SELECT MIN(dt_venda) FROM PEDIDO), CURDATE()),
+             COALESCE((SELECT MIN(dt_perda) FROM PERDA),  CURDATE())) AS inicio,
+       GREATEST(COALESCE((SELECT MAX(dt_venda) FROM PEDIDO), CURDATE()),
+                COALESCE((SELECT MAX(dt_perda) FROM PERDA),  CURDATE())) AS fim;
+
+-- Valores de exemplo do filtro (altere para testar)
+SET @ini = '2026-03-07', @fim = '2026-09-01', @forma = '%', @cat = 0;
+
+-- Indicadores: pedidos, clientes ativos, faturamento (ticket = faturamento / pedidos)
+SELECT COUNT(DISTINCT pe.nr_venda_mes)                          AS pedidos,
+       COUNT(DISTINCT pe.nr_cliente)                            AS clientes_ativos,
+       COALESCE(SUM(ps.quantidade * p.valor_kg_ou_unitario), 0) AS faturamento,
+       (SELECT COUNT(*) FROM CLIENTE)                           AS total_clientes
+FROM PEDIDO pe
+JOIN POSSUI  ps ON ps.nr_venda_mes = pe.nr_venda_mes
+JOIN PRODUTO p  ON p.cd_produto    = ps.cd_produto
+WHERE pe.dt_venda BETWEEN @ini AND @fim
+  AND pe.forma_pagamento LIKE @forma
+  AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                           WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = @cat));
+
+-- Indicador: pedidos do filtro que tiveram devolucao (% = devolucoes / pedidos)
+SELECT COUNT(*) AS pedidos_com_devolucao
+FROM DEVOLUCAO d
+WHERE d.nr_venda_mes IN (SELECT pe.nr_venda_mes
+                         FROM PEDIDO pe
+                         JOIN POSSUI  ps ON ps.nr_venda_mes = pe.nr_venda_mes
+                         JOIN PRODUTO p  ON p.cd_produto    = ps.cd_produto
+                         WHERE pe.dt_venda BETWEEN @ini AND @fim
+                           AND pe.forma_pagamento LIKE @forma
+                           AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                                                    WHERE t.cd_produto = p.cd_produto
+                                                      AND t.cd_categoria = @cat)));
+
+-- Indicador: prejuizo com perdas no periodo (% = prejuizo / faturamento)
+SELECT COALESCE(SUM(pr.qt_perdida * p.valor_kg_ou_unitario), 0) AS prejuizo_perdas
+FROM PERDA pr
+JOIN PRODUTO p ON p.cd_produto = pr.cd_produto
+WHERE pr.dt_perda BETWEEN @ini AND @fim
+  AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                           WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = @cat));
+
+-- Grafico 1: faturamento mensal
+SELECT DATE_FORMAT(pe.dt_venda, '%Y-%m') AS mes,
+       SUM(ps.quantidade * p.valor_kg_ou_unitario) AS total
+FROM PEDIDO pe
+JOIN POSSUI  ps ON ps.nr_venda_mes = pe.nr_venda_mes
+JOIN PRODUTO p  ON p.cd_produto    = ps.cd_produto
+WHERE pe.dt_venda BETWEEN @ini AND @fim
+  AND pe.forma_pagamento LIKE @forma
+  AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                           WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = @cat))
+GROUP BY DATE_FORMAT(pe.dt_venda, '%Y-%m')
+ORDER BY mes;
+
+-- Grafico 2: faturamento por forma de pagamento
+SELECT pe.forma_pagamento, SUM(ps.quantidade * p.valor_kg_ou_unitario) AS total
+FROM PEDIDO pe
+JOIN POSSUI  ps ON ps.nr_venda_mes = pe.nr_venda_mes
+JOIN PRODUTO p  ON p.cd_produto    = ps.cd_produto
+WHERE pe.dt_venda BETWEEN @ini AND @fim
+  AND pe.forma_pagamento LIKE @forma
+  AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                           WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = @cat))
+GROUP BY pe.forma_pagamento
+ORDER BY total DESC;
+
+-- Grafico 3: top 10 produtos por quantidade vendida
+SELECT p.nome, SUM(ps.quantidade) AS qtd
+FROM PEDIDO pe
+JOIN POSSUI  ps ON ps.nr_venda_mes = pe.nr_venda_mes
+JOIN PRODUTO p  ON p.cd_produto    = ps.cd_produto
+WHERE pe.dt_venda BETWEEN @ini AND @fim
+  AND pe.forma_pagamento LIKE @forma
+  AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                           WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = @cat))
+GROUP BY p.cd_produto, p.nome
+ORDER BY qtd DESC
+LIMIT 10;
+
+-- Grafico 4: faturamento por categoria (8 maiores)
+SELECT c.nm_categoria, SUM(ps.quantidade * p.valor_kg_ou_unitario) AS faturamento
+FROM PEDIDO pe
+JOIN POSSUI    ps ON ps.nr_venda_mes = pe.nr_venda_mes
+JOIN PRODUTO   p  ON p.cd_produto    = ps.cd_produto
+JOIN TEM       tc ON tc.cd_produto   = p.cd_produto
+JOIN CATEGORIA c  ON c.cd_categoria  = tc.cd_categoria
+WHERE pe.dt_venda BETWEEN @ini AND @fim
+  AND pe.forma_pagamento LIKE @forma
+  AND (@cat = 0 OR c.cd_categoria = @cat)
+GROUP BY c.cd_categoria, c.nm_categoria
+ORDER BY faturamento DESC
+LIMIT 8;
+
+-- Grafico 5: quantidade perdida por motivo (periodo pela data da perda)
+SELECT COALESCE(pr.motivo_perda, 'Nao informado') AS motivo, SUM(pr.qt_perdida) AS qtd
+FROM PERDA pr
+JOIN PRODUTO p ON p.cd_produto = pr.cd_produto
+WHERE pr.dt_perda BETWEEN @ini AND @fim
+  AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                           WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = @cat))
+GROUP BY pr.motivo_perda
+ORDER BY qtd DESC;
+
+-- Grafico 6: devolucoes dos pedidos do filtro, por forma de resolucao
+SELECT COALESCE(d.forma_resolucao, 'Nao informada') AS resolucao, COUNT(*) AS qtd
+FROM DEVOLUCAO d
+WHERE d.nr_venda_mes IN (SELECT pe.nr_venda_mes
+                         FROM PEDIDO pe
+                         JOIN POSSUI  ps ON ps.nr_venda_mes = pe.nr_venda_mes
+                         JOIN PRODUTO p  ON p.cd_produto    = ps.cd_produto
+                         WHERE pe.dt_venda BETWEEN @ini AND @fim
+                           AND pe.forma_pagamento LIKE @forma
+                           AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                                                    WHERE t.cd_produto = p.cd_produto
+                                                      AND t.cd_categoria = @cat)))
+GROUP BY d.forma_resolucao
+ORDER BY qtd DESC;
+
+
+-- =========================================================
+-- 7.4 ESTATISTICA DESCRITIVA  (card do Dashboard)
+--
+-- A aplicacao busca a AMOSTRA da variavel escolhida (com o mesmo
+-- filtro) e calcula em util/Estatistica.java: media, mediana, moda,
+-- variancia e desvio padrao AMOSTRAIS (divisor n - 1), coeficiente de
+-- variacao, minimo e maximo. Quando nenhum valor se repete (variavel
+-- continua), a moda e informada como CLASSE MODAL de uma distribuicao
+-- de frequencias com k = 1 + 3,3*log10(n) classes (regra de Sturges).
+--
+-- Abaixo, a mesma estatistica calculada direto no SQL para conferencia
+-- (variavel: valor de cada pedido).
+-- =========================================================
+
+-- Amostra: valor de cada pedido (Variavel.VALOR_PEDIDO)
+--   SELECT SUM(ps.quantidade * p.valor_kg_ou_unitario) ... FILTRO ... GROUP BY pe.nr_venda_mes
+-- Amostra: itens por pedido (Variavel.ITENS_PEDIDO)
+--   SELECT COUNT(*) ... FILTRO ... GROUP BY pe.nr_venda_mes
+-- Amostra: quantidade vendida por item (Variavel.QTD_ITEM)
+--   SELECT ps.quantidade ... FILTRO
+
+WITH valores AS (
+    SELECT pe.nr_venda_mes,
+           SUM(ps.quantidade * p.valor_kg_ou_unitario) AS valor
+    FROM PEDIDO pe
+    JOIN POSSUI  ps ON ps.nr_venda_mes = pe.nr_venda_mes
+    JOIN PRODUTO p  ON p.cd_produto    = ps.cd_produto
+    WHERE pe.dt_venda BETWEEN @ini AND @fim
+      AND pe.forma_pagamento LIKE @forma
+      AND (@cat = 0 OR EXISTS (SELECT 1 FROM TEM t
+                               WHERE t.cd_produto = p.cd_produto AND t.cd_categoria = @cat))
+    GROUP BY pe.nr_venda_mes
+),
+ordenados AS (
+    SELECT valor,
+           ROW_NUMBER() OVER (ORDER BY valor) AS pos,
+           COUNT(*)     OVER ()               AS n
+    FROM valores
+)
+SELECT MAX(n)                                    AS n,
+       ROUND(AVG(valor), 2)                      AS media,
+       ROUND(AVG(CASE WHEN pos IN (FLOOR((n + 1) / 2), CEIL((n + 1) / 2))
+                      THEN valor END), 2)        AS mediana,
+       ROUND(VAR_SAMP(valor), 2)                 AS variancia_amostral,
+       ROUND(STDDEV_SAMP(valor), 2)              AS desvio_padrao_amostral,
+       ROUND(100 * STDDEV_SAMP(valor) / AVG(valor), 1) AS coef_variacao_pct,
+       ROUND(MIN(valor), 2)                      AS minimo,
+       ROUND(MAX(valor), 2)                      AS maximo
+FROM ordenados;
+-- com os dados de exemplo e sem filtro: n=40, media=58,28, mediana=44,86,
+-- variancia=2148,54, desvio=46,35, CV=79,5%  (iguais ao Dashboard)
+
+
+-- =========================================================
+-- 7.5 CONSULTAS 9 A 14 COM FILTROS  (dao/Consultas.java)
+-- Mesmas consultas da Parte 5 com os filtros que a aba "Consultas"
+-- oferece. Os valores @ abaixo equivalem a "sem filtro".
+-- =========================================================
+SET @bairro = '', @tipo = '%', @situacao = '%', @min_ped = 1, @produto = '';
+
+-- Consulta 9 (anti join) + filtros de bairro e tipo de cliente
+SELECT cl.nr_cliente, cl.cpf_cnpj,
+       CASE WHEN CHAR_LENGTH(cl.cpf_cnpj) > 14
+            THEN 'Pessoa Juridica' ELSE 'Pessoa Fisica' END AS tipo_cliente,
+       COALESCE(cl.telefone, cl.telefone2, '(sem telefone)') AS contato,
+       cl.bairro
+FROM CLIENTE cl
+LEFT JOIN PEDIDO pe ON pe.nr_cliente = cl.nr_cliente
+WHERE pe.nr_venda_mes IS NULL
+  AND cl.bairro LIKE CONCAT('%', @bairro, '%')
+HAVING tipo_cliente LIKE @tipo
+ORDER BY cl.bairro, cl.nr_cliente;
+
+-- Consulta 10 (full outer join): filtro de situacao
+--   ... mesma consulta da Parte 5, com  HAVING situacao LIKE ?  antes do ORDER BY
+-- Consulta 11 (subconsultas): filtro de minimo de pedidos
+--   ... mesma consulta da Parte 5, com  AND g.qtd_pedidos >= ?  no WHERE
+-- Consulta 12 (subconsultas): filtro de forma de pagamento
+--   ... mesma consulta da Parte 5, com  AND pe.forma_pagamento LIKE ?  no WHERE
+
+-- Consulta 13 - visao vw_vendas_detalhadas com periodo, forma e produto
+SELECT *
+FROM vw_vendas_detalhadas
+WHERE dt_venda BETWEEN '2026-08-01' AND '2026-08-31'
+  AND forma_pagamento LIKE 'Pix'
+  AND produto LIKE CONCAT('%', @produto, '%')
+ORDER BY dt_venda, nr_venda_mes;
+
+-- Consulta 14 - visao vw_situacao_lotes com situacao e produto
+SELECT *
+FROM vw_situacao_lotes
+WHERE situacao LIKE @situacao
+  AND produto LIKE CONCAT('%', @produto, '%')
+ORDER BY dt_validade;

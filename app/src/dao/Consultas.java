@@ -160,7 +160,8 @@ public final class Consultas {
                      d.n_devolucao, d.devolucao_efetivada, d.forma_resolucao
             ORDER BY pe.dt_venda, pe.nr_venda_mes
             """,
-            Consulta.TipoParametro.TEXTO, "Forma de pagamento (% = todas)", "%"),
+            new Consulta.Parametro("Forma de pagamento", Consulta.TipoParametro.TEXTO, "%",
+                "%", "Dinheiro", "Cartao de Credito", "Cartao de Debito", "Pix", "Boleto")),
 
         new Consulta("7. Vendas mensais x forma de pagamento",
             "Tabela pivot: faturamento de cada mes distribuido pelas formas de pagamento, com linha de total (WITH ROLLUP). Agregacao condicional com SUM + CASE.",
@@ -219,8 +220,13 @@ public final class Consultas {
             FROM CLIENTE cl
             LEFT JOIN PEDIDO pe ON pe.nr_cliente = cl.nr_cliente
             WHERE pe.nr_venda_mes IS NULL
+              AND cl.bairro LIKE CONCAT('%', ?, '%')
+            HAVING tipo_cliente LIKE ?
             ORDER BY cl.bairro, cl.nr_cliente
-            """),
+            """,
+            new Consulta.Parametro("Bairro (parte do nome)", Consulta.TipoParametro.TEXTO, ""),
+            new Consulta.Parametro("Tipo de cliente", Consulta.TipoParametro.TEXTO, "%",
+                "%", "Pessoa Fisica", "Pessoa Juridica")),
 
         new Consulta("10. Vendido x perdido por produto (full outer join)",
             "FULL OUTER JOIN emulado (o MySQL nao tem a sintaxe): LEFT JOIN + UNION ALL + RIGHT JOIN ... IS NULL entre o total vendido e o total perdido por produto. Mostra produtos so vendidos, so perdidos e com ambos.",
@@ -269,8 +275,12 @@ public final class Consultas {
                         ELSE 'Venda e perda' END                  AS situacao
             FROM comparativo c
             JOIN PRODUTO p ON p.cd_produto = c.cd_produto
+            HAVING situacao LIKE ?
             ORDER BY situacao, valor_perdido DESC
-            """),
+            """,
+            new Consulta.Parametro("Situacao", Consulta.TipoParametro.TEXTO, "%",
+                "%", "So venda (sem perda)", "So perda (nunca vendido)",
+                "Perde mais do que vende", "Venda e perda")),
 
         new Consulta("11. Clientes acima da media de gasto (subconsultas)",
             "SUBCONSULTAS: tabela derivada com o gasto por cliente + subconsulta escalar com a media desses gastos (media de uma soma). Identifica os melhores clientes.",
@@ -299,8 +309,10 @@ public final class Consultas {
                                      FROM (SELECT SUM(vl_total) AS total
                                              FROM PEDIDO
                                             GROUP BY nr_cliente) t)
+              AND g.qtd_pedidos >= ?
             ORDER BY g.total_gasto DESC
-            """),
+            """,
+            Consulta.TipoParametro.INTEIRO, "Minimo de pedidos do cliente", "1"),
 
         new Consulta("12. Pedidos acima da media da forma de pagamento (subconsultas)",
             "SUBCONSULTAS: correlacionada (media da mesma forma de pagamento no mesmo mes - usa o indice idx_pedido_pagamento_data) + IN aninhado (pedidos com produto que teve perda).",
@@ -325,23 +337,39 @@ public final class Consultas {
                                         FROM POSSUI ps
                                        WHERE ps.cd_produto IN (SELECT DISTINCT pr.cd_produto
                                                                  FROM PERDA pr))
+              AND pe.forma_pagamento LIKE ?
             ORDER BY pe.dt_venda
-            """),
+            """,
+            new Consulta.Parametro("Forma de pagamento", Consulta.TipoParametro.TEXTO, "%",
+                "%", "Dinheiro", "Cartao de Credito", "Cartao de Debito", "Pix", "Boleto")),
 
         new Consulta("13. Visao: vendas detalhadas",
-            "Conteudo da visao vw_vendas_detalhadas (PEDIDO + CLIENTE + POSSUI + PRODUTO + DEVOLUCAO): uma linha por item vendido. Requer a Parte 5 do consultas.sql executada no banco.",
+            "Conteudo da visao vw_vendas_detalhadas (PEDIDO + CLIENTE + POSSUI + PRODUTO + DEVOLUCAO): uma linha por item vendido. Filtros por periodo, forma de pagamento e produto. Requer a Parte 5 do consultas.sql executada no banco.",
             """
             SELECT *
             FROM vw_vendas_detalhadas
+            WHERE dt_venda BETWEEN ? AND ?
+              AND forma_pagamento LIKE ?
+              AND produto LIKE CONCAT('%', ?, '%')
             ORDER BY dt_venda, nr_venda_mes
-            """),
+            """,
+            new Consulta.Parametro("De", Consulta.TipoParametro.DATA, "2026-01-01"),
+            new Consulta.Parametro("Ate", Consulta.TipoParametro.DATA, "2026-12-31"),
+            new Consulta.Parametro("Forma de pagamento", Consulta.TipoParametro.TEXTO, "%",
+                "%", "Dinheiro", "Cartao de Credito", "Cartao de Debito", "Pix", "Boleto"),
+            new Consulta.Parametro("Produto (parte do nome)", Consulta.TipoParametro.TEXTO, "")),
 
         new Consulta("14. Visao: situacao dos lotes",
-            "Conteudo da visao vw_situacao_lotes (ESTOQUE + PRODUTO + PERDA + FORNECE + FORNECEDOR): validade, valor em estoque, perdas e fornecedores de cada lote. Requer a Parte 5 do consultas.sql executada no banco.",
+            "Conteudo da visao vw_situacao_lotes (ESTOQUE + PRODUTO + PERDA + FORNECE + FORNECEDOR): validade, valor em estoque, perdas e fornecedores de cada lote. Filtros por situacao e produto. Requer a Parte 5 do consultas.sql executada no banco.",
             """
             SELECT *
             FROM vw_situacao_lotes
+            WHERE situacao LIKE ?
+              AND produto LIKE CONCAT('%', ?, '%')
             ORDER BY dt_validade
-            """)
+            """,
+            new Consulta.Parametro("Situacao", Consulta.TipoParametro.TEXTO, "%",
+                "%", "VENCIDO", "CRITICO", "ATENCAO", "OK"),
+            new Consulta.Parametro("Produto (parte do nome)", Consulta.TipoParametro.TEXTO, ""))
     );
 }

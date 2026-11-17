@@ -23,11 +23,13 @@ Requer JDK 17 ou superior. O driver `mysql-connector-j-8.2.0.jar` já está em `
 
 | Aba | O que faz |
 |---|---|
-| **Dashboard** | 6 indicadores (clientes, pedidos, faturamento, ticket médio, prejuízo com perdas, devoluções) e 6 gráficos gerados do banco |
+| **Dashboard** | Filtros de período, categoria e forma de pagamento; 6 indicadores com percentuais; estatística descritiva (média, mediana, moda, variância, desvio padrão, CV); 6 gráficos |
 | **Clientes** | Inserção, alteração, exclusão e busca na tabela `CLIENTE` |
 | **Produtos** | Inserção, alteração, exclusão e busca na tabela `PRODUTO` |
 | **Funcionarios** | Inserção, alteração, exclusão e busca na tabela `FUNCIONARIO`, com escolha do supervisor (auto-relacionamento) |
-| **Consultas** | 14 consultas pré-definidas (incluindo as 2 visões da Entrega 4): mostra o SQL, aceita parâmetro quando houver, exibe o resultado em tabela e exporta CSV |
+| **Estoque** | Inserção, alteração, exclusão e busca de lotes na tabela `ESTOQUE`, com situação e estoque disponível calculados pelas funções da Etapa 05 |
+| **Consultas** | 14 consultas e visões: SQL, filtros, tabela, indicadores do resultado, gráfico configurável e exportação CSV |
+| **Rotinas do banco** | Executa os procedimentos da Etapa 05 (reajuste por categoria e baixa FEFO com cursor), registra perdas (trigger) e mostra o log de preços (trigger) |
 | **Correlacao** | Gráfico de dispersão (scatter plot) com reta de regressão linear, coeficiente de Pearson (r) e R², para 5 pares de variáveis |
 | **Graficos Estatistica** | Galeria com os gráficos feitos para a disciplina de Estatística (imagens da pasta `graficos/`) |
 
@@ -55,7 +57,7 @@ O SQL completo está em [`../consultas.sql`](../consultas.sql) e em `src/dao/Con
 | 13 | Visão `vw_vendas_detalhadas` | Visão com 4 joins — Entrega 4 |
 | 14 | Visão `vw_situacao_lotes` | Visão com 4 joins — Entrega 4 |
 
-As consultas 13 e 14 leem as visões: execute antes a Parte 5 do `consultas.sql` no banco.
+As consultas 13 e 14 leem as visões (Parte 5 do `consultas.sql`); as abas Estoque e Rotinas do banco usam as funções, procedimentos e triggers (Parte 6).
 
 ## Estrutura
 
@@ -64,8 +66,9 @@ src/
   main/Exec.java              ponto de entrada
   util/ConnectionFactory.java conexão JDBC (lê db.properties)
   util/Estatistica.java       Pearson, R² e reta de regressão
-  model/                      Cliente, Produto, Funcionario, Consulta, ResultadoConsulta
-  dao/                        ClienteDAO, ProdutoDAO, FuncionarioDAO (CRUD),
+  model/                      Cliente, Produto, Funcionario, Estoque, Consulta, ResultadoConsulta, ItemLista
+  dao/                        ClienteDAO, ProdutoDAO, FuncionarioDAO, EstoqueDAO (CRUD),
+                              RotinasDAO (procedimentos/triggers), ReferenciaDAO (listas),
                               DashboardDAO, ConsultaDAO, Consultas (SQL das consultas),
                               CorrelacaoDAO (pontos do gráfico de dispersão)
   view/                       telas Swing (MainFrame, CrudPanel e cadastros, Dashboard, Consultas...)
